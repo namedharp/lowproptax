@@ -16,3 +16,4 @@ export { Section } from "./Section";
 export { Logo } from "./Logo";
 export { Footer } from "./Footer";
 export { MarketingShell } from "./MarketingShell";
+export { GlassFileUpload } from "./GlassFileUpload";

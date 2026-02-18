@@ -1,68 +1,198 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Briefcase,
-  Building2,
-  DollarSign,
-  TrendingUp,
   FileText,
   ChevronDown,
   ChevronUp,
   Check,
   ArrowRight,
   ArrowLeft,
+  Loader2,
 } from "lucide-react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { GlassButton } from "@/components/ui/GlassButton";
 import { GlassBadge } from "@/components/ui/GlassBadge";
-import { GlassStat } from "@/components/ui/GlassStat";
 import { GlassModal } from "@/components/ui/GlassModal";
 import { GlassSelect } from "@/components/ui/GlassSelect";
-import { mockClients, mockProperties, mockAdminAppeals, mockAgents } from "@/lib/data";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils/cn";
-import type { Client, Property } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
-/*  Get investor clients                                               */
+/*  API Response interfaces                                            */
 /* ------------------------------------------------------------------ */
-const investorClients = mockClients.filter((c) => c.type === "investor");
-
-/* ------------------------------------------------------------------ */
-/*  Portfolio helpers                                                   */
-/* ------------------------------------------------------------------ */
-function getInvestorProperties(clientName: string): Property[] {
-  return mockProperties.filter((p) => p.owner === clientName);
+interface ApiClient {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  role: string;
+  image: string | null;
+  createdAt: string;
+  updatedAt: string;
+  _count: {
+    properties: number;
+    appeals: number;
+  };
 }
 
-function getInvestorAppeals(clientId: string) {
-  return mockAdminAppeals.filter((a) => a.clientId === clientId);
+interface ApiAgent {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  avatarUrl: string | null;
+  activeAppeals: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ApiProperty {
+  id: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  county: string;
+  propertyType: string;
+  assessedValue: number;
+  marketValue: number;
+  taxRate: number;
+  annualTax: number;
+  yearBuilt: number;
+  sqft: number;
+  bedrooms: number | null;
+  bathrooms: number | null;
+  lotSize: number | null;
+  lastAssessmentDate: string;
+  ownerId: string;
+  owner?: {
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+  };
+}
+
+interface ApiAppeal {
+  id: string;
+  propertyId: string;
+  userId: string;
+  status: string;
+  serviceType: string;
+  originalAssessment: number;
+  targetAssessment: number;
+  finalAssessment: number | null;
+  estimatedSavings: number;
+  actualSavings: number | null;
+  notes: string | null;
+  filedDate: string | null;
+  hearingDate: string | null;
+  deadline: string | null;
+  createdAt: string;
+  updatedAt: string;
+  property: {
+    id: string;
+    address: string;
+    city: string;
+    state: string;
+    county: string;
+    propertyType: string;
+  };
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+  };
+  agent?: {
+    id: string;
+    name: string;
+    email: string;
+  } | null;
 }
 
 /* ================================================================== */
 /*  PAGE                                                               */
 /* ================================================================== */
 export default function AdminPortfoliosPage() {
+  /* --- Data state --- */
+  const [clients, setClients] = useState<ApiClient[]>([]);
+  const [agents, setAgents] = useState<ApiAgent[]>([]);
+  const [properties, setProperties] = useState<ApiProperty[]>([]);
+  const [appeals, setAppeals] = useState<ApiAppeal[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  /* --- Expanded client --- */
   const [expandedClient, setExpandedClient] = useState<string | null>(null);
 
   /* --- Batch Appeal Wizard --- */
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
-  const [wizardClient, setWizardClient] = useState<Client | null>(null);
-  const [wizardProperties, setWizardProperties] = useState<Property[]>([]);
+  const [wizardClientId, setWizardClientId] = useState<string | null>(null);
+  const [wizardClientName, setWizardClientName] = useState("");
+  const [wizardProperties, setWizardProperties] = useState<ApiProperty[]>([]);
   const [wizardSelected, setWizardSelected] = useState<Set<string>>(new Set());
-  const [wizardAgent, setWizardAgent] = useState("agent-001");
+  const [wizardAgent, setWizardAgent] = useState("");
   const [wizardPriority, setWizardPriority] = useState("medium");
+  const [wizardSubmitting, setWizardSubmitting] = useState(false);
 
-  function openWizard(client: Client, properties: Property[], selectAll: boolean) {
-    setWizardClient(client);
-    setWizardProperties(properties);
+  /* --- Fetch data --- */
+  const fetchData = useCallback(() => {
+    setLoading(true);
+    Promise.all([
+      fetch("/api/clients").then((r) => r.json()),
+      fetch("/api/agents").then((r) => r.json()),
+      fetch("/api/properties").then((r) => r.json()),
+      fetch("/api/appeals").then((r) => r.json()),
+    ])
+      .then(([clientsData, agentsData, propertiesData, appealsData]) => {
+        if (Array.isArray(clientsData)) setClients(clientsData);
+        if (Array.isArray(agentsData)) {
+          setAgents(agentsData);
+          if (agentsData.length > 0) setWizardAgent(agentsData[0].id);
+        }
+        if (Array.isArray(propertiesData)) setProperties(propertiesData);
+        if (Array.isArray(appealsData)) setAppeals(appealsData);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  /* --- Investor clients (role === "investor") --- */
+  const investorClients = useMemo(
+    () => clients.filter((c) => c.role === "investor"),
+    [clients]
+  );
+
+  /* --- Portfolio helpers --- */
+  function getInvestorProperties(investorId: string): ApiProperty[] {
+    return properties.filter((p) => p.ownerId === investorId);
+  }
+
+  function getInvestorAppeals(investorId: string): ApiAppeal[] {
+    return appeals.filter((a) => a.userId === investorId);
+  }
+
+  /* --- Wizard helpers --- */
+  function openWizard(
+    client: ApiClient,
+    clientProperties: ApiProperty[],
+    selectAll: boolean
+  ) {
+    setWizardClientId(client.id);
+    setWizardClientName(client.name ?? "");
+    setWizardProperties(clientProperties);
     setWizardSelected(
-      selectAll ? new Set(properties.map((p) => p.id)) : new Set()
+      selectAll ? new Set(clientProperties.map((p) => p.id)) : new Set()
     );
     setWizardStep(1);
-    setWizardAgent("agent-001");
+    if (agents.length > 0) setWizardAgent(agents[0].id);
     setWizardPriority("medium");
     setWizardOpen(true);
   }
@@ -80,6 +210,48 @@ export default function AdminPortfoliosPage() {
     wizardSelected.has(p.id)
   );
 
+  /* --- Submit batch appeals --- */
+  async function handleWizardSubmit() {
+    if (selectedWizardProperties.length === 0) return;
+    setWizardSubmitting(true);
+    try {
+      const promises = selectedWizardProperties.map((prop) =>
+        fetch("/api/appeals", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            propertyId: prop.id,
+            serviceType: "full-service",
+            originalAssessment: prop.assessedValue,
+            targetAssessment: prop.marketValue,
+            estimatedSavings: prop.assessedValue - prop.marketValue,
+            assignedAgent: wizardAgent,
+            priority: wizardPriority,
+          }),
+        })
+      );
+      await Promise.all(promises);
+      setWizardOpen(false);
+      fetchData();
+    } catch {
+      // Silently handle error
+    } finally {
+      setWizardSubmitting(false);
+    }
+  }
+
+  /* --- Loading state --- */
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-8 w-8 text-teal-400 animate-spin" />
+          <p className="text-sm text-white/50">Loading portfolios...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Page header */}
@@ -93,20 +265,20 @@ export default function AdminPortfoliosPage() {
       {/* Investor Cards */}
       <div className="space-y-4">
         {investorClients.map((client) => {
-          const properties = getInvestorProperties(client.name);
-          const appeals = getInvestorAppeals(client.id);
-          const activeAppeals = appeals.filter(
+          const clientProps = getInvestorProperties(client.id);
+          const clientAppeals = getInvestorAppeals(client.id);
+          const activeAppeals = clientAppeals.filter(
             (a) => !["won", "lost", "withdrawn"].includes(a.status)
           );
-          const totalAssessed = properties.reduce(
+          const totalAssessed = clientProps.reduce(
             (sum, p) => sum + p.assessedValue,
             0
           );
-          const totalTax = properties.reduce(
+          const totalTax = clientProps.reduce(
             (sum, p) => sum + p.annualTax,
             0
           );
-          const potentialSavings = appeals.reduce(
+          const potentialSavings = clientAppeals.reduce(
             (sum, a) => sum + a.estimatedSavings,
             0
           );
@@ -123,7 +295,7 @@ export default function AdminPortfoliosPage() {
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                   <div className="flex items-center gap-4">
                     <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500/30 to-teal-500/30 border border-[rgba(255,255,255,0.15)] text-lg font-bold text-white flex-shrink-0">
-                      {client.name
+                      {(client.name ?? "")
                         .split(" ")
                         .map((n) => n[0])
                         .join("")}
@@ -140,7 +312,7 @@ export default function AdminPortfoliosPage() {
                   <div className="flex flex-wrap items-center gap-6">
                     <div className="text-center">
                       <p className="text-xl font-bold text-white">
-                        {properties.length}
+                        {clientProps.length}
                       </p>
                       <p className="text-[11px] text-white/40 uppercase">
                         Properties
@@ -206,7 +378,7 @@ export default function AdminPortfoliosPage() {
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
                     <div className="rounded-lg bg-[rgba(255,255,255,0.06)] border border-[rgba(255,255,255,0.08)] p-3 text-center">
                       <p className="text-lg font-bold text-white">
-                        {properties.length}
+                        {clientProps.length}
                       </p>
                       <p className="text-[11px] text-white/40">
                         Total Properties
@@ -271,8 +443,8 @@ export default function AdminPortfoliosPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {properties.map((prop) => {
-                          const propAppeal = mockAdminAppeals.find(
+                        {clientProps.map((prop) => {
+                          const propAppeal = appeals.find(
                             (a) => a.propertyId === prop.id
                           );
                           return (
@@ -317,7 +489,7 @@ export default function AdminPortfoliosPage() {
                             </tr>
                           );
                         })}
-                        {properties.length === 0 && (
+                        {clientProps.length === 0 && (
                           <tr>
                             <td
                               colSpan={6}
@@ -337,7 +509,7 @@ export default function AdminPortfoliosPage() {
                       variant="primary"
                       size="sm"
                       icon={<FileText className="h-3.5 w-3.5" />}
-                      onClick={() => openWizard(client, properties, true)}
+                      onClick={() => openWizard(client, clientProps, true)}
                     >
                       Appeal All
                     </GlassButton>
@@ -345,7 +517,7 @@ export default function AdminPortfoliosPage() {
                       variant="secondary"
                       size="sm"
                       icon={<FileText className="h-3.5 w-3.5" />}
-                      onClick={() => openWizard(client, properties, false)}
+                      onClick={() => openWizard(client, clientProps, false)}
                     >
                       Appeal Selected
                     </GlassButton>
@@ -358,13 +530,21 @@ export default function AdminPortfoliosPage() {
             </div>
           );
         })}
+
+        {investorClients.length === 0 && (
+          <GlassCard padding="md">
+            <p className="text-center text-sm text-white/40 py-8">
+              No investor portfolios found.
+            </p>
+          </GlassCard>
+        )}
       </div>
 
       {/* Batch Appeal Wizard Modal */}
       <GlassModal
         isOpen={wizardOpen}
         onClose={() => setWizardOpen(false)}
-        title={`Batch Appeal Wizard - ${wizardClient?.name || ""}`}
+        title={`Batch Appeal Wizard - ${wizardClientName}`}
         size="xl"
       >
         <div>
@@ -530,7 +710,7 @@ export default function AdminPortfoliosPage() {
                     </span>{" "}
                     properties belonging to{" "}
                     <span className="text-white font-medium">
-                      {wizardClient?.name}
+                      {wizardClientName}
                     </span>
                   </p>
                 </div>
@@ -538,7 +718,7 @@ export default function AdminPortfoliosPage() {
                   label="Assign Agent"
                   value={wizardAgent}
                   onChange={setWizardAgent}
-                  options={mockAgents.map((a) => ({
+                  options={agents.map((a) => ({
                     value: a.id,
                     label: a.name,
                   }))}
@@ -585,9 +765,10 @@ export default function AdminPortfoliosPage() {
                 variant="primary"
                 size="sm"
                 icon={<Check className="h-4 w-4" />}
-                onClick={() => setWizardOpen(false)}
+                disabled={wizardSubmitting}
+                onClick={handleWizardSubmit}
               >
-                Confirm & File Appeals
+                {wizardSubmitting ? "Filing..." : "Confirm & File Appeals"}
               </GlassButton>
             )}
           </div>

@@ -1,18 +1,35 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Users,
   Pencil,
   Bell,
   Settings,
-  Shield,
+  Plus,
+  Loader2,
 } from "lucide-react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { GlassBadge } from "@/components/ui/GlassBadge";
-import { GlassProgress } from "@/components/ui/GlassProgress";
-import { mockAgents } from "@/lib/data";
+import { GlassButton } from "@/components/ui/GlassButton";
+import { GlassModal } from "@/components/ui/GlassModal";
+import { GlassInput } from "@/components/ui/GlassInput";
+import { GlassSelect } from "@/components/ui/GlassSelect";
 import { cn } from "@/lib/utils/cn";
+
+/* ------------------------------------------------------------------ */
+/*  API Response interfaces                                            */
+/* ------------------------------------------------------------------ */
+interface ApiAgent {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  avatarUrl: string | null;
+  activeAppeals: number;
+  createdAt: string;
+  updatedAt: string;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Toggle Switch component                                            */
@@ -78,6 +95,19 @@ function Checkbox({
 /*  PAGE                                                               */
 /* ================================================================== */
 export default function AdminSettingsPage() {
+  /* --- Agent data state --- */
+  const [agents, setAgents] = useState<ApiAgent[]>([]);
+  const [agentsLoading, setAgentsLoading] = useState(true);
+
+  /* --- Add Agent Modal --- */
+  const [showAddAgent, setShowAddAgent] = useState(false);
+  const [addingAgent, setAddingAgent] = useState(false);
+  const [newAgent, setNewAgent] = useState({
+    name: "",
+    email: "",
+    role: "agent",
+  });
+
   /* --- Workflow toggles --- */
   const [autoAssign, setAutoAssign] = useState(true);
   const [emailNotifications, setEmailNotifications] = useState(true);
@@ -89,6 +119,48 @@ export default function AdminSettingsPage() {
   const [notifStatusChange, setNotifStatusChange] = useState(true);
   const [notifHearingApproach, setNotifHearingApproach] = useState(true);
   const [notifResolved, setNotifResolved] = useState(true);
+
+  /* --- Fetch agents --- */
+  const fetchAgents = useCallback(() => {
+    setAgentsLoading(true);
+    fetch("/api/agents")
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data)) setAgents(data);
+        setAgentsLoading(false);
+      })
+      .catch(() => setAgentsLoading(false));
+  }, []);
+
+  useEffect(() => {
+    fetchAgents();
+  }, [fetchAgents]);
+
+  /* --- Add Agent handler --- */
+  async function handleAddAgent() {
+    if (!newAgent.name || !newAgent.email) return;
+    setAddingAgent(true);
+    try {
+      const res = await fetch("/api/agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newAgent.name,
+          email: newAgent.email,
+          role: newAgent.role,
+        }),
+      });
+      if (res.ok) {
+        setShowAddAgent(false);
+        setNewAgent({ name: "", email: "", role: "agent" });
+        fetchAgents();
+      }
+    } catch {
+      // Silently handle error
+    } finally {
+      setAddingAgent(false);
+    }
+  }
 
   return (
     <div className="space-y-8">
@@ -102,115 +174,132 @@ export default function AdminSettingsPage() {
 
       {/* ---- Team Management ---- */}
       <GlassCard padding="md">
-        <div className="flex items-center gap-3 mb-5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-500/20">
-            <Users className="h-5 w-5 text-teal-400" />
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-500/20">
+              <Users className="h-5 w-5 text-teal-400" />
+            </div>
+            <h2 className="text-lg font-semibold text-white">Team Management</h2>
           </div>
-          <h2 className="text-lg font-semibold text-white">Team Management</h2>
+          <GlassButton
+            variant="primary"
+            size="sm"
+            icon={<Plus className="h-4 w-4" />}
+            onClick={() => setShowAddAgent(true)}
+          >
+            Add Agent
+          </GlassButton>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-[rgba(255,255,255,0.06)]">
-                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-teal-200/80">
-                  Name
-                </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-teal-200/80 hidden sm:table-cell">
-                  Email
-                </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-teal-200/80">
-                  Role
-                </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-teal-200/80 hidden md:table-cell">
-                  Active Appeals
-                </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-teal-200/80 hidden md:table-cell">
-                  Total Wins
-                </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-teal-200/80">
-                  Success Rate
-                </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-teal-200/80">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {mockAgents.map((agent) => {
-                const roleVariant =
-                  agent.role === "admin"
-                    ? "error"
-                    : agent.role === "manager"
-                      ? "warning"
-                      : "teal";
+        {agentsLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="flex flex-col items-center gap-3">
+              <Loader2 className="h-6 w-6 text-teal-400 animate-spin" />
+              <p className="text-sm text-white/50">Loading agents...</p>
+            </div>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-[rgba(255,255,255,0.06)]">
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-teal-200/80">
+                    Name
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-teal-200/80 hidden sm:table-cell">
+                    Email
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-teal-200/80">
+                    Role
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-teal-200/80 hidden md:table-cell">
+                    Active Appeals
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-teal-200/80 hidden md:table-cell">
+                    Total Wins
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-teal-200/80">
+                    Success Rate
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-teal-200/80">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {agents.map((agent) => {
+                  const roleVariant =
+                    agent.role === "admin"
+                      ? "error"
+                      : agent.role === "manager"
+                        ? "warning"
+                        : "teal";
 
-                return (
-                  <tr
-                    key={agent.id}
-                    className="border-t border-[rgba(255,255,255,0.06)] hover:bg-[rgba(255,255,255,0.04)] transition-colors"
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-teal-500/30 to-emerald-500/30 border border-[rgba(255,255,255,0.15)] text-xs font-semibold text-white flex-shrink-0">
-                          {agent.name
-                            .split(" ")
-                            .map((n) => n[0])
-                            .join("")}
+                  return (
+                    <tr
+                      key={agent.id}
+                      className="border-t border-[rgba(255,255,255,0.06)] hover:bg-[rgba(255,255,255,0.04)] transition-colors"
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-teal-500/30 to-emerald-500/30 border border-[rgba(255,255,255,0.15)] text-xs font-semibold text-white flex-shrink-0">
+                            {(agent.name ?? "")
+                              .split(" ")
+                              .map((n) => n[0])
+                              .join("")}
+                          </div>
+                          <span className="text-sm font-medium text-white">
+                            {agent.name}
+                          </span>
                         </div>
-                        <span className="text-sm font-medium text-white">
-                          {agent.name}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-white/60 hidden sm:table-cell">
-                      {agent.email}
-                    </td>
-                    <td className="px-4 py-3">
-                      <GlassBadge variant={roleVariant}>
-                        {agent.role}
-                      </GlassBadge>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-white/80 hidden md:table-cell">
-                      {agent.activeAppeals}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-white/80 hidden md:table-cell">
-                      {agent.totalWins}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2 min-w-[120px]">
-                        <GlassProgress
-                          value={agent.successRate}
-                          variant={
-                            agent.successRate >= 80
-                              ? "teal"
-                              : agent.successRate >= 70
-                                ? "emerald"
-                                : "white"
-                          }
-                          size="sm"
-                          className="flex-1"
-                        />
-                        <span className="text-xs text-white/60 w-8 text-right">
-                          {agent.successRate}%
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-white/60 hover:bg-[rgba(255,255,255,0.08)] hover:text-white transition-colors"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                        <span className="hidden sm:inline">Edit</span>
-                      </button>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-white/60 hidden sm:table-cell">
+                        {agent.email}
+                      </td>
+                      <td className="px-4 py-3">
+                        <GlassBadge variant={roleVariant}>
+                          {agent.role}
+                        </GlassBadge>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-white/80 hidden md:table-cell">
+                        {agent.activeAppeals}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-white/80 hidden md:table-cell">
+                        {"\u2014"}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2 min-w-[120px]">
+                          <span className="text-xs text-white/60">
+                            {"\u2014"}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-white/60 hover:bg-[rgba(255,255,255,0.08)] hover:text-white transition-colors"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline">Edit</span>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {agents.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={7}
+                      className="px-4 py-12 text-center text-sm text-white/40"
+                    >
+                      No agents found.
                     </td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </GlassCard>
 
       {/* ---- Workflow Settings ---- */}
@@ -342,6 +431,61 @@ export default function AdminSettingsPage() {
           />
         </div>
       </GlassCard>
+
+      {/* Add Agent Modal */}
+      <GlassModal
+        isOpen={showAddAgent}
+        onClose={() => setShowAddAgent(false)}
+        title="Add New Agent"
+        size="md"
+      >
+        <div className="space-y-4">
+          <GlassInput
+            label="Full Name"
+            placeholder="Jane Doe"
+            value={newAgent.name}
+            onChange={(e) =>
+              setNewAgent({ ...newAgent, name: e.target.value })
+            }
+          />
+          <GlassInput
+            label="Email"
+            placeholder="jane.doe@lowproptax.com"
+            type="email"
+            value={newAgent.email}
+            onChange={(e) =>
+              setNewAgent({ ...newAgent, email: e.target.value })
+            }
+          />
+          <GlassSelect
+            label="Role"
+            value={newAgent.role}
+            onChange={(v) => setNewAgent({ ...newAgent, role: v })}
+            options={[
+              { value: "agent", label: "Agent" },
+              { value: "manager", label: "Manager" },
+              { value: "admin", label: "Admin" },
+            ]}
+          />
+          <div className="flex justify-end gap-3 pt-2">
+            <GlassButton
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowAddAgent(false)}
+            >
+              Cancel
+            </GlassButton>
+            <GlassButton
+              variant="primary"
+              size="sm"
+              disabled={addingAgent || !newAgent.name || !newAgent.email}
+              onClick={handleAddAgent}
+            >
+              {addingAgent ? "Saving..." : "Save Agent"}
+            </GlassButton>
+          </div>
+        </div>
+      </GlassModal>
     </div>
   );
 }

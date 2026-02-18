@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Search,
-  FileText,
   Filter,
   ChevronDown,
   ChevronUp,
@@ -11,8 +10,6 @@ import {
   UserCheck,
   RefreshCw,
   Download,
-  Clock,
-  File,
   Calendar,
   MessageSquare,
 } from "lucide-react";
@@ -23,16 +20,67 @@ import { GlassModal } from "@/components/ui/GlassModal";
 import { GlassInput } from "@/components/ui/GlassInput";
 import { GlassSelect } from "@/components/ui/GlassSelect";
 import { GlassTextarea } from "@/components/ui/GlassTextarea";
-import { mockAdminAppeals, mockAgents } from "@/lib/data";
 import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { cn } from "@/lib/utils/cn";
-import type { AdminAppeal } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
-/*  Agent name resolver                                                */
+/*  API response interfaces                                            */
 /* ------------------------------------------------------------------ */
-function agentName(agentId: string): string {
-  return mockAgents.find((a) => a.id === agentId)?.name ?? agentId;
+interface ApiProperty {
+  id: string;
+  address: string;
+  city: string;
+  state: string;
+  county: string;
+  propertyType: string;
+}
+
+interface ApiUser {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+}
+
+interface ApiAgent {
+  id: string;
+  name: string;
+  email: string;
+}
+
+interface ApiAppeal {
+  id: string;
+  status: string;
+  serviceType: string;
+  filedDate: string | null;
+  hearingDate: string | null;
+  originalAssessment: number;
+  targetAssessment: number;
+  finalAssessment: number | null;
+  estimatedSavings: number;
+  actualSavings: number | null;
+  notes: string | null;
+  priority: string | null;
+  deadline: string | null;
+  propertyId: string;
+  userId: string;
+  agentId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  property: ApiProperty;
+  user: ApiUser;
+  agent: ApiAgent | null;
+}
+
+interface ApiAgentListItem {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  avatarUrl: string | null;
+  activeAppeals: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -40,7 +88,7 @@ function agentName(agentId: string): string {
 /* ------------------------------------------------------------------ */
 type BadgeVariant = "default" | "success" | "warning" | "error" | "info" | "teal";
 
-function statusBadgeVariant(status: AdminAppeal["status"]): BadgeVariant {
+function statusBadgeVariant(status: string): BadgeVariant {
   switch (status) {
     case "draft":
       return "default";
@@ -61,7 +109,7 @@ function statusBadgeVariant(status: AdminAppeal["status"]): BadgeVariant {
   }
 }
 
-function priorityBadgeVariant(priority: AdminAppeal["priority"]): BadgeVariant {
+function priorityBadgeVariant(priority: string | null): BadgeVariant {
   switch (priority) {
     case "urgent":
       return "error";
@@ -76,7 +124,7 @@ function priorityBadgeVariant(priority: AdminAppeal["priority"]): BadgeVariant {
   }
 }
 
-function serviceLabel(st: AdminAppeal["serviceType"]): string {
+function serviceLabel(st: string): string {
   switch (st) {
     case "full-service":
       return "Full Service";
@@ -100,12 +148,12 @@ const statusLabels: Record<string, string> = {
 };
 
 /* ------------------------------------------------------------------ */
-/*  Mock timeline for detail view                                      */
+/*  Mock timeline for detail view (placeholder until timeline API)     */
 /* ------------------------------------------------------------------ */
-function mockTimeline(appeal: AdminAppeal) {
+function mockTimeline(appeal: ApiAppeal) {
   const items: { date: string; label: string; detail: string }[] = [];
   items.push({
-    date: appeal.lastUpdated,
+    date: appeal.updatedAt,
     label: "Last Updated",
     detail: `Status: ${statusLabels[appeal.status] || appeal.status}`,
   });
@@ -124,17 +172,31 @@ function mockTimeline(appeal: AdminAppeal) {
     });
   }
   items.push({
-    date: appeal.filedDate || appeal.lastUpdated,
+    date: appeal.filedDate || appeal.updatedAt,
     label: "Appeal Created",
     detail: `Original assessment: ${formatCurrency(appeal.originalAssessment)}`,
   });
   return items;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Helper: build full property address from nested property           */
+/* ------------------------------------------------------------------ */
+function fullPropertyAddress(appeal: ApiAppeal): string {
+  if (!appeal.property) return "Unknown";
+  return `${appeal.property.address}, ${appeal.property.city}, ${appeal.property.state}`;
+}
+
 /* ================================================================== */
 /*  PAGE                                                               */
 /* ================================================================== */
 export default function AdminAppealsPage() {
+  /* --- Data state --- */
+  const [appeals, setAppeals] = useState<ApiAppeal[]>([]);
+  const [agents, setAgents] = useState<ApiAgentListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
   /* --- Filters --- */
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -149,20 +211,36 @@ export default function AdminAppealsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   /* --- Modals --- */
-  const [statusModal, setStatusModal] = useState<AdminAppeal | null>(null);
-  const [reassignModal, setReassignModal] = useState<AdminAppeal | null>(null);
+  const [statusModal, setStatusModal] = useState<ApiAppeal | null>(null);
+  const [reassignModal, setReassignModal] = useState<ApiAppeal | null>(null);
   const [newStatus, setNewStatus] = useState("");
   const [modalNotes, setModalNotes] = useState("");
   const [reassignAgent, setReassignAgent] = useState("");
 
+  /* --- Fetch data --- */
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/appeals").then((r) => r.json()),
+      fetch("/api/agents").then((r) => r.json()),
+    ])
+      .then(([appealsData, agentsData]) => {
+        setAppeals(Array.isArray(appealsData) ? appealsData : []);
+        setAgents(Array.isArray(agentsData) ? agentsData : []);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
   /* --- Filtered data --- */
   const filtered = useMemo(() => {
-    return mockAdminAppeals.filter((a) => {
+    return appeals.filter((a) => {
       const q = search.toLowerCase();
+      const addr = fullPropertyAddress(a).toLowerCase();
+      const client = (a.user?.name ?? "").toLowerCase();
       const matchSearch =
         !q ||
-        a.propertyAddress.toLowerCase().includes(q) ||
-        a.clientName.toLowerCase().includes(q) ||
+        addr.includes(q) ||
+        client.includes(q) ||
         a.id.toLowerCase().includes(q);
       const matchStatus = statusFilter === "all" || a.status === statusFilter;
       const matchPriority =
@@ -170,12 +248,12 @@ export default function AdminAppealsPage() {
       const matchService =
         serviceFilter === "all" || a.serviceType === serviceFilter;
       const matchAgent =
-        agentFilter === "all" || a.assignedAgent === agentFilter;
+        agentFilter === "all" || a.agentId === agentFilter;
       return (
         matchSearch && matchStatus && matchPriority && matchService && matchAgent
       );
     });
-  }, [search, statusFilter, priorityFilter, serviceFilter, agentFilter]);
+  }, [search, statusFilter, priorityFilter, serviceFilter, agentFilter, appeals]);
 
   /* --- Select helpers --- */
   function toggleSelect(id: string) {
@@ -195,14 +273,14 @@ export default function AdminAppealsPage() {
   }
 
   /* --- Stats line --- */
-  const activeCount = mockAdminAppeals.filter(
+  const activeCount = appeals.filter(
     (a) => !["won", "lost", "withdrawn"].includes(a.status)
   ).length;
-  const hearingCount = mockAdminAppeals.filter(
+  const hearingCount = appeals.filter(
     (a) => a.status === "hearing-scheduled"
   ).length;
-  const wonCount = mockAdminAppeals.filter((a) => a.status === "won").length;
-  const totalResolved = mockAdminAppeals.filter((a) =>
+  const wonCount = appeals.filter((a) => a.status === "won").length;
+  const totalResolved = appeals.filter((a) =>
     ["won", "lost"].includes(a.status)
   ).length;
   const successRate =
@@ -220,6 +298,84 @@ export default function AdminAppealsPage() {
   function formatAppealId(id: string): string {
     const num = id.replace(/\D/g, "");
     return `APL-${num.padStart(3, "0")}`;
+  }
+
+  /* --- Save status update via API --- */
+  async function handleSaveStatus() {
+    if (!statusModal) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/appeals/${statusModal.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus, notes: modalNotes }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setAppeals((prev) =>
+          prev.map((a) =>
+            a.id === statusModal.id
+              ? { ...a, status: updated.status ?? newStatus, notes: modalNotes || a.notes, updatedAt: updated.updatedAt ?? new Date().toISOString() }
+              : a
+          )
+        );
+      }
+    } catch {
+      // silently fail for now
+    } finally {
+      setSaving(false);
+      setStatusModal(null);
+    }
+  }
+
+  /* --- Save agent reassignment via API --- */
+  async function handleSaveReassign() {
+    if (!reassignModal) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/appeals/${reassignModal.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assignedAgent: reassignAgent }),
+      });
+      if (res.ok) {
+        const agentObj = agents.find((ag) => ag.id === reassignAgent);
+        setAppeals((prev) =>
+          prev.map((a) =>
+            a.id === reassignModal.id
+              ? {
+                  ...a,
+                  agentId: reassignAgent,
+                  agent: agentObj
+                    ? { id: agentObj.id, name: agentObj.name, email: agentObj.email }
+                    : a.agent,
+                }
+              : a
+          )
+        );
+      }
+    } catch {
+      // silently fail for now
+    } finally {
+      setSaving(false);
+      setReassignModal(null);
+    }
+  }
+
+  /* --- Loading --- */
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-white">Appeal Operations</h1>
+          <p className="mt-1 text-sm text-white/50">Loading...</p>
+        </div>
+        <div className="flex items-center justify-center py-24">
+          <div className="animate-spin h-8 w-8 border-2 border-teal-400 border-t-transparent rounded-full" />
+          <span className="ml-3 text-white/60">Loading appeals...</span>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -282,7 +438,7 @@ export default function AdminAppealsPage() {
             onChange={setAgentFilter}
             options={[
               { value: "all", label: "All Agents" },
-              ...mockAgents.map((a) => ({ value: a.id, label: a.name })),
+              ...agents.map((a) => ({ value: a.id, label: a.name })),
             ]}
           />
           <GlassButton variant="ghost" size="sm" onClick={clearFilters} icon={<Filter className="h-4 w-4" />}>
@@ -383,7 +539,7 @@ export default function AdminAppealsPage() {
                     }}
                     onReassign={() => {
                       setReassignModal(appeal);
-                      setReassignAgent(appeal.assignedAgent);
+                      setReassignAgent(appeal.agentId ?? "");
                       setModalNotes("");
                     }}
                     formatAppealId={formatAppealId}
@@ -414,7 +570,7 @@ export default function AdminAppealsPage() {
       >
         <div className="space-y-4">
           <p className="text-sm text-white/70">
-            {statusModal?.propertyAddress}
+            {statusModal ? fullPropertyAddress(statusModal) : ""}
           </p>
           <GlassSelect
             label="New Status"
@@ -447,9 +603,10 @@ export default function AdminAppealsPage() {
             <GlassButton
               variant="primary"
               size="sm"
-              onClick={() => setStatusModal(null)}
+              onClick={handleSaveStatus}
+              disabled={saving}
             >
-              Save
+              {saving ? "Saving..." : "Save"}
             </GlassButton>
           </div>
         </div>
@@ -464,14 +621,14 @@ export default function AdminAppealsPage() {
       >
         <div className="space-y-4">
           <p className="text-sm text-white/70">
-            {reassignModal?.propertyAddress} &mdash;{" "}
-            {reassignModal?.clientName}
+            {reassignModal ? fullPropertyAddress(reassignModal) : ""} &mdash;{" "}
+            {reassignModal?.user?.name ?? ""}
           </p>
           <GlassSelect
             label="Assign to Agent"
             value={reassignAgent}
             onChange={setReassignAgent}
-            options={mockAgents.map((a) => ({
+            options={agents.map((a) => ({
               value: a.id,
               label: a.name,
             }))}
@@ -493,9 +650,10 @@ export default function AdminAppealsPage() {
             <GlassButton
               variant="primary"
               size="sm"
-              onClick={() => setReassignModal(null)}
+              onClick={handleSaveReassign}
+              disabled={saving}
             >
-              Save
+              {saving ? "Saving..." : "Save"}
             </GlassButton>
           </div>
         </div>
@@ -517,7 +675,7 @@ function AppealRow({
   onReassign,
   formatAppealId,
 }: {
-  appeal: AdminAppeal;
+  appeal: ApiAppeal;
   isSelected: boolean;
   onToggleSelect: () => void;
   isExpanded: boolean;
@@ -548,10 +706,10 @@ function AppealRow({
           {formatAppealId(appeal.id)}
         </td>
         <td className="px-3 py-3 text-sm text-white/90 max-w-[200px] truncate">
-          {appeal.propertyAddress.split(",")[0]}
+          {appeal.property?.address ?? "Unknown"}
         </td>
         <td className="px-3 py-3 text-sm text-white/70 hidden md:table-cell">
-          {appeal.clientName}
+          {appeal.user?.name ?? "Unknown"}
         </td>
         <td className="px-3 py-3 hidden lg:table-cell">
           <GlassBadge variant="default">{serviceLabel(appeal.serviceType)}</GlassBadge>
@@ -563,11 +721,11 @@ function AppealRow({
         </td>
         <td className="px-3 py-3 hidden lg:table-cell">
           <GlassBadge variant={priorityBadgeVariant(appeal.priority)}>
-            {appeal.priority}
+            {appeal.priority ?? "normal"}
           </GlassBadge>
         </td>
         <td className="px-3 py-3 text-sm text-white/70 hidden xl:table-cell">
-          {agentName(appeal.assignedAgent)}
+          {appeal.agent?.name ?? "Unassigned"}
         </td>
         <td className="px-3 py-3 text-sm text-white/60 hidden xl:table-cell">
           {appeal.filedDate ? formatDate(appeal.filedDate) : "\u2014"}
@@ -625,7 +783,7 @@ function AppealRow({
                     Property Info
                   </h4>
                   <div className="space-y-1.5 text-sm">
-                    <p className="text-white/80">{appeal.propertyAddress}</p>
+                    <p className="text-white/80">{fullPropertyAddress(appeal)}</p>
                     <div className="grid grid-cols-2 gap-2 mt-2">
                       <div>
                         <span className="text-[11px] text-white/40 uppercase">
@@ -661,7 +819,7 @@ function AppealRow({
                           {formatCurrency(appeal.estimatedSavings)}
                         </p>
                       </div>
-                      {appeal.actualSavings !== undefined && (
+                      {appeal.actualSavings != null && (
                         <div>
                           <span className="text-[11px] text-white/40 uppercase">
                             Actual Savings
@@ -684,7 +842,7 @@ function AppealRow({
                   <h4 className="text-sm font-semibold text-white mt-5 mb-2">
                     Client
                   </h4>
-                  <p className="text-sm text-white/80">{appeal.clientName}</p>
+                  <p className="text-sm text-white/80">{appeal.user?.name ?? "Unknown"}</p>
                   <p className="text-xs text-white/50">
                     {serviceLabel(appeal.serviceType)}
                   </p>
@@ -724,34 +882,18 @@ function AppealRow({
                     Internal Notes
                   </h4>
                   <p className="text-xs text-white/60 leading-relaxed">
-                    {appeal.internalNotes || "No notes."}
+                    {appeal.notes || "No notes."}
                   </p>
                 </div>
 
-                {/* Documents */}
+                {/* Documents placeholder + Actions */}
                 <div>
                   <h4 className="text-sm font-semibold text-white mb-3">
                     Documents
                   </h4>
-                  {appeal.documents.length > 0 ? (
-                    <div className="space-y-2">
-                      {appeal.documents.map((doc, idx) => (
-                        <div
-                          key={idx}
-                          className="flex items-center gap-2 rounded-lg bg-[rgba(255,255,255,0.06)] border border-[rgba(255,255,255,0.08)] p-2.5 hover:bg-[rgba(255,255,255,0.1)] transition-colors cursor-pointer"
-                        >
-                          <File className="h-4 w-4 text-teal-400 flex-shrink-0" />
-                          <span className="text-xs text-white/80 truncate">
-                            {doc}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-white/40">
-                      No documents uploaded.
-                    </p>
-                  )}
+                  <p className="text-xs text-white/40">
+                    No documents uploaded.
+                  </p>
 
                   {/* Action Buttons */}
                   <div className="flex flex-wrap gap-2 mt-6">

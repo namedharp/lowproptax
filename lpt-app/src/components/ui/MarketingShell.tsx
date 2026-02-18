@@ -4,15 +4,25 @@ import { usePathname } from "next/navigation";
 import { GlassNavbar } from "./GlassNavbar";
 import { Footer } from "./Footer";
 
-const authenticatedPrefixes = ["/dashboard", "/portfolio", "/ai-assistant"];
+const appPrefixes = [
+  "/dashboard",
+  "/portfolio",
+  "/ai-assistant",
+  "/overview",
+  "/clients",
+  "/appeals",
+  "/properties",
+  "/portfolios",
+  "/settings",
+];
 
 export function MarketingShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isAuthenticated = authenticatedPrefixes.some((prefix) =>
+  const isAppRoute = appPrefixes.some((prefix) =>
     pathname.startsWith(prefix)
   );
 
-  if (isAuthenticated) {
+  if (isAppRoute) {
     return <>{children}</>;
   }
 

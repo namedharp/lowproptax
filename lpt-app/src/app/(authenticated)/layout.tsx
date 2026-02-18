@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
+import { useSession, signOut } from "next-auth/react";
 import {
   LayoutDashboard,
   Briefcase,
@@ -12,6 +13,7 @@ import {
   HelpCircle,
   Menu,
   X,
+  LogOut,
 } from "lucide-react";
 import { Logo } from "@/components/ui/Logo";
 import { cn } from "@/lib/utils/cn";
@@ -35,6 +37,16 @@ export default function AuthenticatedLayout({
 }) {
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { data: session } = useSession();
+
+  const userName = session?.user?.name || "User";
+  const userRole = (session?.user as { role?: string })?.role || "homeowner";
+  const initials = userName
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
 
   return (
     <div className="min-h-screen">
@@ -112,14 +124,22 @@ export default function AuthenticatedLayout({
         <div className="border-t border-[rgba(255,255,255,0.1)] px-4 py-4">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-teal-500/40 to-emerald-500/40 backdrop-blur-[12px] border border-[rgba(255,255,255,0.2)] text-sm font-semibold text-white flex-shrink-0">
-              MJ
+              {initials}
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-white truncate">
-                Marcus Johnson
+                {userName}
               </p>
-              <p className="text-xs text-white/50">Investor</p>
+              <p className="text-xs text-white/50 capitalize">{userRole}</p>
             </div>
+            <button
+              type="button"
+              onClick={() => signOut({ callbackUrl: "/login" })}
+              className="p-1.5 rounded-lg text-white/40 hover:text-white/70 hover:bg-[rgba(255,255,255,0.08)] transition-colors"
+              title="Sign out"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
           </div>
         </div>
       </aside>

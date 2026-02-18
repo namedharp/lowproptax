@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Users,
   FileText,
@@ -11,15 +11,82 @@ import {
   Building2,
   Briefcase,
   Clock,
-  AlertTriangle,
 } from "lucide-react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { GlassStat } from "@/components/ui/GlassStat";
 import { GlassBadge } from "@/components/ui/GlassBadge";
-import { mockAdminAppeals, mockActivityLog } from "@/lib/data";
-import { formatCurrency, formatDate } from "@/lib/utils/format";
+import { formatDate } from "@/lib/utils/format";
 import { cn } from "@/lib/utils/cn";
-import type { AdminAppeal, ActivityLog } from "@/lib/types";
+
+/* ------------------------------------------------------------------ */
+/*  API response interfaces                                            */
+/* ------------------------------------------------------------------ */
+interface AdminStatsResponse {
+  totalClients: number;
+  totalActiveAppeals: number;
+  totalRevenue: number;
+  avgSavingsPerAppeal: number;
+  appealsByStatus: Record<string, number>;
+  successRate: number;
+}
+
+interface ApiProperty {
+  id: string;
+  address: string;
+  city: string;
+  state: string;
+  county: string;
+  propertyType: string;
+}
+
+interface ApiUser {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+}
+
+interface ApiAgent {
+  id: string;
+  name: string;
+  email: string;
+}
+
+interface ApiAppeal {
+  id: string;
+  status: string;
+  serviceType: string;
+  filedDate: string | null;
+  hearingDate: string | null;
+  originalAssessment: number;
+  targetAssessment: number;
+  finalAssessment: number | null;
+  estimatedSavings: number;
+  actualSavings: number | null;
+  notes: string | null;
+  priority: string | null;
+  deadline: string | null;
+  propertyId: string;
+  userId: string;
+  agentId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  property: ApiProperty;
+  user: ApiUser;
+  agent: ApiAgent | null;
+}
+
+type ActivityEntityType = "appeal" | "client" | "property" | "portfolio";
+
+interface ApiActivity {
+  id: string;
+  action: string;
+  entityType: ActivityEntityType;
+  entityId: string;
+  agentName: string | null;
+  details: string | null;
+  createdAt: string;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Helper: relative time                                              */
@@ -50,7 +117,7 @@ function daysUntil(dateStr: string): number {
 /* ------------------------------------------------------------------ */
 /*  Activity icon by entity type                                       */
 /* ------------------------------------------------------------------ */
-function ActivityIcon({ entityType }: { entityType: ActivityLog["entityType"] }) {
+function ActivityIcon({ entityType }: { entityType: ActivityEntityType }) {
   const iconClass = "h-4 w-4";
   switch (entityType) {
     case "appeal":
@@ -69,16 +136,6 @@ function ActivityIcon({ entityType }: { entityType: ActivityLog["entityType"] })
 /* ------------------------------------------------------------------ */
 /*  Status color map                                                   */
 /* ------------------------------------------------------------------ */
-const statusColors: Record<string, string> = {
-  draft: "bg-gray-500/20 text-gray-300 border-gray-400/30",
-  submitted: "bg-blue-500/20 text-blue-300 border-blue-400/30",
-  "under-review": "bg-yellow-500/20 text-yellow-300 border-yellow-400/30",
-  "hearing-scheduled": "bg-purple-500/20 text-purple-300 border-purple-400/30",
-  won: "bg-green-500/20 text-green-300 border-green-400/30",
-  lost: "bg-red-500/20 text-red-300 border-red-400/30",
-  withdrawn: "bg-gray-500/20 text-gray-400 border-gray-400/30",
-};
-
 const statusLabels: Record<string, string> = {
   draft: "Draft",
   submitted: "Submitted",
@@ -93,9 +150,31 @@ const statusLabels: Record<string, string> = {
 /*  PAGE                                                               */
 /* ================================================================== */
 export default function AdminOverviewPage() {
+  /* --- State --- */
+  const [stats, setStats] = useState<AdminStatsResponse | null>(null);
+  const [appeals, setAppeals] = useState<ApiAppeal[]>([]);
+  const [activities, setActivities] = useState<ApiActivity[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  /* --- Fetch data --- */
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/dashboard/stats").then((r) => r.json()),
+      fetch("/api/appeals").then((r) => r.json()),
+      fetch("/api/activity?limit=15").then((r) => r.json()),
+    ])
+      .then(([statsData, appealsData, activityData]) => {
+        setStats(statsData);
+        setAppeals(Array.isArray(appealsData) ? appealsData : []);
+        setActivities(Array.isArray(activityData) ? activityData : []);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
   /* --- Group appeals by status --- */
   const pipeline = useMemo(() => {
-    const groups: Record<string, AdminAppeal[]> = {
+    const groups: Record<string, ApiAppeal[]> = {
       draft: [],
       submitted: [],
       "under-review": [],
@@ -103,21 +182,27 @@ export default function AdminOverviewPage() {
       won: [],
       lost: [],
     };
-    for (const a of mockAdminAppeals) {
+    for (const a of appeals) {
       if (groups[a.status]) groups[a.status].push(a);
     }
     return groups;
-  }, []);
+  }, [appeals]);
 
   /* --- Deadline appeals --- */
   const deadlineAppeals = useMemo(() => {
-    return mockAdminAppeals
+    return appeals
       .filter((a) => a.deadline)
       .sort(
         (a, b) =>
           new Date(a.deadline!).getTime() - new Date(b.deadline!).getTime()
       );
-  }, []);
+  }, [appeals]);
+
+  /* --- Derived KPI values --- */
+  const pendingHearings = useMemo(
+    () => appeals.filter((a) => a.status === "hearing-scheduled").length,
+    [appeals]
+  );
 
   const today = new Date().toLocaleDateString("en-US", {
     weekday: "long",
@@ -125,6 +210,22 @@ export default function AdminOverviewPage() {
     month: "long",
     day: "numeric",
   });
+
+  /* --- Loading --- */
+  if (loading) {
+    return (
+      <div className="space-y-8">
+        <div>
+          <h1 className="text-3xl font-bold text-white">Admin Overview</h1>
+          <p className="mt-1 text-sm text-white/50">{today}</p>
+        </div>
+        <div className="flex items-center justify-center py-24">
+          <div className="animate-spin h-8 w-8 border-2 border-teal-400 border-t-transparent rounded-full" />
+          <span className="ml-3 text-white/60">Loading dashboard...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8">
@@ -138,38 +239,33 @@ export default function AdminOverviewPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <GlassStat
           label="Total Clients"
-          value="47"
+          value={stats?.totalClients?.toLocaleString() ?? "0"}
           icon={<Users className="h-6 w-6" />}
-          trend={{ value: "+3 this month", positive: true }}
         />
         <GlassStat
           label="Active Appeals"
-          value="23"
+          value={stats?.totalActiveAppeals?.toLocaleString() ?? "0"}
           icon={<FileText className="h-6 w-6" />}
-          trend={{ value: "+5 this month", positive: true }}
         />
         <GlassStat
-          label="Revenue This Month"
-          value="$18,750"
+          label="Total Revenue"
+          value={`$${(stats?.totalRevenue ?? 0).toLocaleString()}`}
           icon={<DollarSign className="h-6 w-6" />}
-          trend={{ value: "+12%", positive: true }}
         />
         <GlassStat
           label="Success Rate"
-          value="92%"
+          value={`${stats?.successRate ?? 0}%`}
           icon={<TrendingUp className="h-6 w-6" />}
-          trend={{ value: "+4%", positive: true }}
         />
         <GlassStat
           label="Pending Hearings"
-          value="8"
+          value={pendingHearings.toString()}
           icon={<Calendar className="h-6 w-6" />}
         />
         <GlassStat
           label="Avg Savings / Appeal"
-          value="$2,450"
+          value={`$${(stats?.avgSavingsPerAppeal ?? 0).toLocaleString()}`}
           icon={<BarChart3 className="h-6 w-6" />}
-          trend={{ value: "+8%", positive: true }}
         />
       </div>
 
@@ -213,10 +309,10 @@ export default function AdminOverviewPage() {
                       className="rounded-lg bg-[rgba(255,255,255,0.06)] border border-[rgba(255,255,255,0.08)] p-2.5 hover:bg-[rgba(255,255,255,0.1)] transition-colors"
                     >
                       <p className="text-xs font-medium text-white/90 truncate">
-                        {appeal.propertyAddress.split(",")[0]}
+                        {appeal.property?.address ?? "Unknown"}
                       </p>
                       <p className="text-[11px] text-white/50 mt-0.5 truncate">
-                        {appeal.clientName}
+                        {appeal.user?.name ?? "Unknown"}
                       </p>
                     </div>
                   ))}
@@ -240,7 +336,12 @@ export default function AdminOverviewPage() {
             Recent Activity
           </h2>
           <div className="space-y-1 max-h-[500px] overflow-y-auto pr-1">
-            {mockActivityLog.slice(0, 15).map((entry) => (
+            {activities.length === 0 && (
+              <p className="text-sm text-white/40 text-center py-8">
+                No recent activity.
+              </p>
+            )}
+            {activities.map((entry) => (
               <div
                 key={entry.id}
                 className="flex gap-3 p-2.5 rounded-lg hover:bg-[rgba(255,255,255,0.05)] transition-colors"
@@ -257,10 +358,10 @@ export default function AdminOverviewPage() {
                   </p>
                   <div className="flex items-center gap-2 mt-1">
                     <span className="text-[11px] text-teal-400/70">
-                      {entry.agentName}
+                      {entry.agentName ?? "System"}
                     </span>
                     <span className="text-[11px] text-white/30">
-                      {relativeTime(entry.timestamp)}
+                      {relativeTime(entry.createdAt)}
                     </span>
                   </div>
                 </div>
@@ -298,6 +399,16 @@ export default function AdminOverviewPage() {
                 </tr>
               </thead>
               <tbody>
+                {deadlineAppeals.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={5}
+                      className="px-4 py-8 text-center text-sm text-white/40"
+                    >
+                      No upcoming deadlines.
+                    </td>
+                  </tr>
+                )}
                 {deadlineAppeals.map((appeal) => {
                   const days = daysUntil(appeal.deadline!);
                   const dayColor =
@@ -321,10 +432,10 @@ export default function AdminOverviewPage() {
                       className="border-b border-[rgba(255,255,255,0.06)] hover:bg-[rgba(255,255,255,0.04)] transition-colors"
                     >
                       <td className="px-4 py-3 text-sm text-white/90 max-w-[180px] truncate">
-                        {appeal.propertyAddress.split(",")[0]}
+                        {appeal.property?.address ?? "Unknown"}
                       </td>
                       <td className="px-4 py-3 text-sm text-white/70">
-                        {appeal.clientName}
+                        {appeal.user?.name ?? "Unknown"}
                       </td>
                       <td className="px-4 py-3 text-sm text-white/70">
                         {formatDate(appeal.deadline!)}
@@ -346,7 +457,7 @@ export default function AdminOverviewPage() {
                               | "teal"
                           }
                         >
-                          {appeal.priority}
+                          {appeal.priority ?? "normal"}
                         </GlassBadge>
                       </td>
                     </tr>

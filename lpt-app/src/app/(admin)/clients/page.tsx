@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import {
-  Users,
   Search,
   Plus,
   Eye,
@@ -13,6 +12,7 @@ import {
   ChevronDown,
   ChevronUp,
   X,
+  Loader2,
 } from "lucide-react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { GlassButton } from "@/components/ui/GlassButton";
@@ -21,22 +21,131 @@ import { GlassModal } from "@/components/ui/GlassModal";
 import { GlassInput } from "@/components/ui/GlassInput";
 import { GlassSelect } from "@/components/ui/GlassSelect";
 import { GlassTextarea } from "@/components/ui/GlassTextarea";
-import { mockClients, mockAgents, mockAdminAppeals, mockProperties } from "@/lib/data";
 import { formatCurrency } from "@/lib/utils/format";
-import { cn } from "@/lib/utils/cn";
-import type { Client } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
-/*  Agent name resolver                                                */
+/*  API Response interfaces                                            */
 /* ------------------------------------------------------------------ */
-function agentName(agentId: string): string {
-  return mockAgents.find((a) => a.id === agentId)?.name ?? agentId;
+interface ApiClient {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  role: string;
+  image: string | null;
+  createdAt: string;
+  updatedAt: string;
+  _count: {
+    properties: number;
+    appeals: number;
+  };
+}
+
+interface ApiAgent {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  avatarUrl: string | null;
+  activeAppeals: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ApiProperty {
+  id: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  county: string;
+  propertyType: string;
+  assessedValue: number;
+  marketValue: number;
+  taxRate: number;
+  annualTax: number;
+  yearBuilt: number;
+  sqft: number;
+  bedrooms: number | null;
+  bathrooms: number | null;
+  lotSize: number | null;
+  lastAssessmentDate: string;
+  ownerId: string;
+  owner?: {
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+  };
+}
+
+interface ApiAppeal {
+  id: string;
+  propertyId: string;
+  userId: string;
+  status: string;
+  serviceType: string;
+  originalAssessment: number;
+  targetAssessment: number;
+  finalAssessment: number | null;
+  estimatedSavings: number;
+  actualSavings: number | null;
+  notes: string | null;
+  filedDate: string | null;
+  hearingDate: string | null;
+  deadline: string | null;
+  createdAt: string;
+  updatedAt: string;
+  property: {
+    id: string;
+    address: string;
+    city: string;
+    state: string;
+    county: string;
+    propertyType: string;
+  };
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+  };
+  agent?: {
+    id: string;
+    name: string;
+    email: string;
+  } | null;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Mapped client type for UI                                          */
+/* ------------------------------------------------------------------ */
+interface MappedClient {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  type: string;
+  status: string;
+  propertiesCount: number;
+  activeAppeals: number;
+  totalSavings: string;
+  assignedAgent: string;
+  createdAt: string;
+  notes: string;
 }
 
 /* ================================================================== */
 /*  PAGE                                                               */
 /* ================================================================== */
 export default function AdminClientsPage() {
+  /* --- Data state --- */
+  const [clients, setClients] = useState<ApiClient[]>([]);
+  const [agents, setAgents] = useState<ApiAgent[]>([]);
+  const [properties, setProperties] = useState<ApiProperty[]>([]);
+  const [appeals, setAppeals] = useState<ApiAppeal[]>([]);
+  const [loading, setLoading] = useState(true);
+
   /* --- Filters --- */
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -48,18 +157,70 @@ export default function AdminClientsPage() {
 
   /* --- Add Client Modal --- */
   const [showAddModal, setShowAddModal] = useState(false);
+  const [addingClient, setAddingClient] = useState(false);
   const [newClient, setNewClient] = useState({
     name: "",
     email: "",
     phone: "",
     type: "homeowner",
-    assignedAgent: "agent-001",
+    assignedAgent: "",
     notes: "",
   });
 
+  /* --- Agent name resolver --- */
+  const agentName = useCallback(
+    (agentId: string): string => {
+      return agents.find((a) => a.id === agentId)?.name ?? agentId;
+    },
+    [agents]
+  );
+
+  /* --- Fetch data --- */
+  const fetchData = useCallback(() => {
+    setLoading(true);
+    Promise.all([
+      fetch("/api/clients").then((r) => r.json()),
+      fetch("/api/agents").then((r) => r.json()),
+      fetch("/api/properties").then((r) => r.json()),
+      fetch("/api/appeals").then((r) => r.json()),
+    ])
+      .then(([clientsData, agentsData, propertiesData, appealsData]) => {
+        if (Array.isArray(clientsData)) setClients(clientsData);
+        if (Array.isArray(agentsData)) setAgents(agentsData);
+        if (Array.isArray(propertiesData)) setProperties(propertiesData);
+        if (Array.isArray(appealsData)) setAppeals(appealsData);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  /* --- Map clients to UI format --- */
+  const mappedClients: MappedClient[] = useMemo(() => {
+    return clients.map((c) => ({
+      id: c.id,
+      name: c.name ?? "",
+      email: c.email ?? "",
+      phone: c.phone ?? "",
+      type: c.role,
+      status: "active",
+      propertiesCount: c._count.properties,
+      activeAppeals: c._count.appeals,
+      totalSavings: "N/A",
+      assignedAgent: "N/A",
+      createdAt: c.createdAt
+        ? new Date(c.createdAt).toLocaleDateString()
+        : "",
+      notes: "",
+    }));
+  }, [clients]);
+
   /* --- Filtered clients --- */
   const filtered = useMemo(() => {
-    return mockClients.filter((c) => {
+    return mappedClients.filter((c) => {
       const q = search.toLowerCase();
       const matchSearch =
         !q ||
@@ -67,18 +228,63 @@ export default function AdminClientsPage() {
         c.email.toLowerCase().includes(q);
       const matchType = typeFilter === "all" || c.type === typeFilter;
       const matchStatus = statusFilter === "all" || c.status === statusFilter;
-      const matchAgent =
-        agentFilter === "all" || c.assignedAgent === agentFilter;
+      const matchAgent = agentFilter === "all" || c.assignedAgent === agentFilter;
       return matchSearch && matchType && matchStatus && matchAgent;
     });
-  }, [search, typeFilter, statusFilter, agentFilter]);
+  }, [search, typeFilter, statusFilter, agentFilter, mappedClients]);
 
   /* --- Get properties and appeals for a client --- */
-  function clientProperties(clientName: string) {
-    return mockProperties.filter((p) => p.owner === clientName);
+  function clientProperties(clientId: string) {
+    return properties.filter((p) => p.ownerId === clientId);
   }
   function clientAppeals(clientId: string) {
-    return mockAdminAppeals.filter((a) => a.clientId === clientId);
+    return appeals.filter((a) => a.userId === clientId);
+  }
+
+  /* --- Add Client handler --- */
+  async function handleAddClient() {
+    if (!newClient.name || !newClient.email) return;
+    setAddingClient(true);
+    try {
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newClient.name,
+          email: newClient.email,
+          password: "TempPass123!",
+          role: newClient.type,
+        }),
+      });
+      if (res.ok) {
+        setShowAddModal(false);
+        setNewClient({
+          name: "",
+          email: "",
+          phone: "",
+          type: "homeowner",
+          assignedAgent: "",
+          notes: "",
+        });
+        fetchData();
+      }
+    } catch {
+      // Silently handle error
+    } finally {
+      setAddingClient(false);
+    }
+  }
+
+  /* --- Loading state --- */
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-8 w-8 text-teal-400 animate-spin" />
+          <p className="text-sm text-white/50">Loading clients...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -129,7 +335,7 @@ export default function AdminClientsPage() {
             onChange={setAgentFilter}
             options={[
               { value: "all", label: "All Agents" },
-              ...mockAgents.map((a) => ({ value: a.id, label: a.name })),
+              ...agents.map((a) => ({ value: a.id, label: a.name })),
             ]}
           />
         </div>
@@ -184,8 +390,9 @@ export default function AdminClientsPage() {
                     onToggle={() =>
                       setExpandedId(isExpanded ? null : client.id)
                     }
-                    properties={clientProperties(client.name)}
+                    properties={clientProperties(client.id)}
                     appeals={clientAppeals(client.id)}
+                    agentName={agentName}
                   />
                 );
               })}
@@ -256,7 +463,7 @@ export default function AdminClientsPage() {
               onChange={(v) =>
                 setNewClient({ ...newClient, assignedAgent: v })
               }
-              options={mockAgents.map((a) => ({
+              options={agents.map((a) => ({
                 value: a.id,
                 label: a.name,
               }))}
@@ -281,19 +488,10 @@ export default function AdminClientsPage() {
             <GlassButton
               variant="primary"
               size="sm"
-              onClick={() => {
-                setShowAddModal(false);
-                setNewClient({
-                  name: "",
-                  email: "",
-                  phone: "",
-                  type: "homeowner",
-                  assignedAgent: "agent-001",
-                  notes: "",
-                });
-              }}
+              disabled={addingClient || !newClient.name || !newClient.email}
+              onClick={handleAddClient}
             >
-              Save Client
+              {addingClient ? "Saving..." : "Save Client"}
             </GlassButton>
           </div>
         </div>
@@ -311,12 +509,14 @@ function ClientRow({
   onToggle,
   properties,
   appeals,
+  agentName,
 }: {
-  client: Client;
+  client: MappedClient;
   isExpanded: boolean;
   onToggle: () => void;
-  properties: typeof mockProperties;
-  appeals: typeof mockAdminAppeals;
+  properties: ApiProperty[];
+  appeals: ApiAppeal[];
+  agentName: (id: string) => string;
 }) {
   const statusVariant =
     client.status === "active"
@@ -344,7 +544,7 @@ function ClientRow({
         </td>
         <td className="px-4 py-3 text-sm text-white/70">{client.email}</td>
         <td className="px-4 py-3 text-sm text-white/70 hidden md:table-cell">
-          {client.phone}
+          {client.phone || "\u2014"}
         </td>
         <td className="px-4 py-3">
           <GlassBadge variant={typeVariant}>{client.type}</GlassBadge>
@@ -356,13 +556,13 @@ function ClientRow({
           {client.activeAppeals}
         </td>
         <td className="px-4 py-3 text-sm text-white/80 hidden xl:table-cell">
-          {formatCurrency(client.totalSavings)}
+          {client.totalSavings}
         </td>
         <td className="px-4 py-3">
           <GlassBadge variant={statusVariant}>{client.status}</GlassBadge>
         </td>
         <td className="px-4 py-3 text-sm text-white/70 hidden xl:table-cell">
-          {agentName(client.assignedAgent)}
+          {client.assignedAgent}
         </td>
         <td className="px-4 py-3">
           <div className="flex items-center gap-1">
@@ -406,11 +606,11 @@ function ClientRow({
                     </p>
                     <p className="text-white/70">
                       <span className="text-white/40">Phone: </span>
-                      {client.phone}
+                      {client.phone || "\u2014"}
                     </p>
                     <p className="text-white/70">
                       <span className="text-white/40">Agent: </span>
-                      {agentName(client.assignedAgent)}
+                      {client.assignedAgent}
                     </p>
                     <p className="text-white/70">
                       <span className="text-white/40">Since: </span>
@@ -467,7 +667,7 @@ function ClientRow({
                         >
                           <div className="min-w-0">
                             <p className="text-xs font-medium text-white/90 truncate">
-                              {a.propertyAddress.split(",")[0]}
+                              {a.property.address.split(",")[0]}
                             </p>
                             <p className="text-[11px] text-white/50">
                               Est. savings: {formatCurrency(a.estimatedSavings)}

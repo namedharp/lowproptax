@@ -1,23 +1,46 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Eye, EyeOff, Mail, Lock } from "lucide-react";
+import { Eye, EyeOff, Mail, Lock, AlertCircle } from "lucide-react";
+import { signIn } from "next-auth/react";
 
-/* ============================================================
-   LOGIN PAGE — Client Component
-   ============================================================ */
+function LoginForm() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
 
-export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    // In production, this would call an auth API
-    alert("Login functionality coming soon!");
+    setError(null);
+    setLoading(true);
+
+    try {
+      const result = await signIn("credentials", {
+        email,
+        password,
+        redirect: false,
+      });
+
+      if (result?.error) {
+        setError("Invalid email or password. Please try again.");
+      } else {
+        router.push(callbackUrl);
+        router.refresh();
+      }
+    } catch {
+      setError("An unexpected error occurred. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -35,6 +58,25 @@ export default function LoginPage() {
           </h1>
           <p className="text-sm text-white/60 mt-1">
             Sign in to manage your property tax appeals
+          </p>
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div className="mb-5 flex items-center gap-2 bg-red-500/10 border border-red-400/30 rounded-xl px-4 py-3">
+            <AlertCircle className="h-4 w-4 text-red-400 flex-shrink-0" />
+            <p className="text-sm text-red-300">{error}</p>
+          </div>
+        )}
+
+        {/* Demo Credentials */}
+        <div className="mb-5 bg-teal-500/10 border border-teal-400/30 rounded-xl px-4 py-3">
+          <p className="text-xs font-medium text-teal-400 mb-1">Demo Accounts</p>
+          <p className="text-xs text-white/60">
+            Admin: elena.kowalski@lowproptax.com / admin123
+          </p>
+          <p className="text-xs text-white/60">
+            Investor: marcus.johnson@email.com / demo123
           </p>
         </div>
 
@@ -109,9 +151,17 @@ export default function LoginPage() {
           {/* Submit */}
           <button
             type="submit"
-            className="w-full bg-gradient-to-r from-teal-500/40 to-emerald-500/40 backdrop-blur-[12px] border border-[rgba(255,255,255,0.2)] text-white rounded-xl px-5 py-3 font-medium hover:from-teal-500/60 hover:to-emerald-500/60 transition-all duration-300"
+            disabled={loading}
+            className="w-full bg-gradient-to-r from-teal-500/40 to-emerald-500/40 backdrop-blur-[12px] border border-[rgba(255,255,255,0.2)] text-white rounded-xl px-5 py-3 font-medium hover:from-teal-500/60 hover:to-emerald-500/60 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            Sign In
+            {loading ? (
+              <>
+                <div className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                Signing in...
+              </>
+            ) : (
+              "Sign In"
+            )}
           </button>
         </form>
 
@@ -176,5 +226,13 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   );
 }

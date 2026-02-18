@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { MarketingShell } from "@/components/ui/MarketingShell";
+import AuthProvider from "@/components/providers/AuthProvider";
 
 export const metadata: Metadata = {
   title: {
@@ -19,7 +20,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="font-sans antialiased">
-        <MarketingShell>{children}</MarketingShell>
+        <AuthProvider>
+          <MarketingShell>{children}</MarketingShell>
+        </AuthProvider>
       </body>
     </html>
   );

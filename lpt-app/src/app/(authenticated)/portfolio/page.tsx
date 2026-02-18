@@ -1,8 +1,6 @@
 "use client";
 
-import { useState } from "react";
-import { mockProperties } from "@/lib/data/properties";
-import { mockAppeals } from "@/lib/data/appeals";
+import { useState, useEffect } from "react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { GlassButton } from "@/components/ui/GlassButton";
 import { GlassBadge } from "@/components/ui/GlassBadge";
@@ -18,52 +16,7 @@ import {
   CheckSquare,
   Square,
 } from "lucide-react";
-import type { Property, Appeal } from "@/lib/types";
-
-const portfolioStats = [
-  {
-    label: "Total Properties",
-    value: "12",
-    icon: Building2,
-    color: "text-teal-400",
-    bgColor: "bg-teal-500/20",
-  },
-  {
-    label: "Total Assessed Value",
-    value: formatCurrency(4250000),
-    icon: DollarSign,
-    color: "text-emerald-400",
-    bgColor: "bg-emerald-500/20",
-  },
-  {
-    label: "Total Annual Tax",
-    value: formatCurrency(89250),
-    icon: Receipt,
-    color: "text-yellow-400",
-    bgColor: "bg-yellow-500/20",
-  },
-  {
-    label: "Potential Savings",
-    value: formatCurrency(18500),
-    icon: PiggyBank,
-    color: "text-green-400",
-    bgColor: "bg-green-500/20",
-  },
-  {
-    label: "Appeals In Progress",
-    value: "5",
-    icon: FileText,
-    color: "text-blue-400",
-    bgColor: "bg-blue-500/20",
-  },
-  {
-    label: "Portfolio ROI",
-    value: "340%",
-    icon: TrendingUp,
-    color: "text-teal-400",
-    bgColor: "bg-teal-500/20",
-  },
-];
+import type { Property, Appeal, PortfolioSummary } from "@/lib/types";
 
 const propertyTypeLabels: Record<Property["propertyType"], string> = {
   "single-family": "Single Family",
@@ -72,14 +25,6 @@ const propertyTypeLabels: Record<Property["propertyType"], string> = {
   commercial: "Commercial",
   "vacant-land": "Vacant Land",
 };
-
-function getAppealForProperty(propertyId: string): Appeal | undefined {
-  return mockAppeals.find(
-    (a) =>
-      a.propertyId === propertyId &&
-      !["won", "lost", "withdrawn"].includes(a.status)
-  );
-}
 
 const statusLabel: Record<Appeal["status"], string> = {
   draft: "Draft",
@@ -103,14 +48,43 @@ const statusBadgeVariant: Record<Appeal["status"], "default" | "success" | "warn
 
 export default function PortfolioPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [stats, setStats] = useState<PortfolioSummary | null>(null);
+  const [properties, setProperties] = useState<Property[]>([]);
+  const [appeals, setAppeals] = useState<Appeal[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const allSelected = selectedIds.size === mockProperties.length;
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/portfolio/stats").then((r) => r.json()),
+      fetch("/api/properties").then((r) => r.json()),
+      fetch("/api/appeals").then((r) => r.json()),
+    ])
+      .then(([statsData, propertiesData, appealsData]) => {
+        setStats(statsData);
+        setProperties(Array.isArray(propertiesData) ? propertiesData : []);
+        setAppeals(Array.isArray(appealsData) ? appealsData : []);
+        setLoading(false);
+      })
+      .catch(() => {
+        setLoading(false);
+      });
+  }, []);
+
+  function getAppealForProperty(propertyId: string): Appeal | undefined {
+    return appeals.find(
+      (a) =>
+        a.propertyId === propertyId &&
+        !["won", "lost", "withdrawn"].includes(a.status)
+    );
+  }
+
+  const allSelected = properties.length > 0 && selectedIds.size === properties.length;
 
   function toggleSelectAll() {
     if (allSelected) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(mockProperties.map((p) => p.id)));
+      setSelectedIds(new Set(properties.map((p) => p.id)));
     }
   }
 
@@ -124,6 +98,66 @@ export default function PortfolioPage() {
       }
       return next;
     });
+  }
+
+  const portfolioStats = [
+    {
+      label: "Total Properties",
+      value: stats ? String(stats.totalProperties) : "--",
+      icon: Building2,
+      color: "text-teal-400",
+      bgColor: "bg-teal-500/20",
+    },
+    {
+      label: "Total Assessed Value",
+      value: stats ? formatCurrency(stats.totalAssessedValue) : "--",
+      icon: DollarSign,
+      color: "text-emerald-400",
+      bgColor: "bg-emerald-500/20",
+    },
+    {
+      label: "Total Annual Tax",
+      value: stats ? formatCurrency(stats.totalAnnualTax) : "--",
+      icon: Receipt,
+      color: "text-yellow-400",
+      bgColor: "bg-yellow-500/20",
+    },
+    {
+      label: "Potential Savings",
+      value: stats ? formatCurrency(stats.potentialSavings) : "--",
+      icon: PiggyBank,
+      color: "text-green-400",
+      bgColor: "bg-green-500/20",
+    },
+    {
+      label: "Appeals In Progress",
+      value: stats ? String(stats.appealsInProgress) : "--",
+      icon: FileText,
+      color: "text-blue-400",
+      bgColor: "bg-blue-500/20",
+    },
+    {
+      label: "Portfolio ROI",
+      value: stats ? `${stats.roi}%` : "--",
+      icon: TrendingUp,
+      color: "text-teal-400",
+      bgColor: "bg-teal-500/20",
+    },
+  ];
+
+  const roiPercent = stats?.roi ?? 0;
+  const roiCapped = Math.min(roiPercent, 400);
+  const roiBarWidth = `${Math.min((roiCapped / 400) * 100, 100)}%`;
+
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-7xl pt-10 lg:pt-0 flex items-center justify-center min-h-[50vh]">
+        <div className="text-center">
+          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-teal-400 border-t-transparent" />
+          <p className="mt-4 text-white/60 text-sm">Loading portfolio...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -179,8 +213,8 @@ export default function PortfolioPage() {
           </button>
           <span className="text-sm text-white/50">
             {selectedIds.size > 0
-              ? `${selectedIds.size} of ${mockProperties.length} selected`
-              : `${mockProperties.length} properties`}
+              ? `${selectedIds.size} of ${properties.length} selected`
+              : `${properties.length} properties`}
           </span>
           <div className="flex-1" />
           <GlassButton
@@ -253,72 +287,80 @@ export default function PortfolioPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[rgba(255,255,255,0.05)]">
-              {mockProperties.map((property) => {
-                const appeal = getAppealForProperty(property.id);
-                const isSelected = selectedIds.has(property.id);
-                return (
-                  <tr
-                    key={property.id}
-                    className={`transition-colors ${
-                      isSelected
-                        ? "bg-teal-500/5"
-                        : "hover:bg-[rgba(255,255,255,0.05)]"
-                    }`}
-                  >
-                    <td className="px-6 py-4">
-                      <button
-                        type="button"
-                        onClick={() => toggleSelect(property.id)}
-                        className="text-white/50 hover:text-white transition-colors cursor-pointer"
-                      >
-                        {isSelected ? (
-                          <CheckSquare className="h-4 w-4 text-teal-400" />
+              {properties.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-6 py-8 text-center text-sm text-white/40">
+                    No properties found.
+                  </td>
+                </tr>
+              ) : (
+                properties.map((property) => {
+                  const appeal = getAppealForProperty(property.id);
+                  const isSelected = selectedIds.has(property.id);
+                  return (
+                    <tr
+                      key={property.id}
+                      className={`transition-colors ${
+                        isSelected
+                          ? "bg-teal-500/5"
+                          : "hover:bg-[rgba(255,255,255,0.05)]"
+                      }`}
+                    >
+                      <td className="px-6 py-4">
+                        <button
+                          type="button"
+                          onClick={() => toggleSelect(property.id)}
+                          className="text-white/50 hover:text-white transition-colors cursor-pointer"
+                        >
+                          {isSelected ? (
+                            <CheckSquare className="h-4 w-4 text-teal-400" />
+                          ) : (
+                            <Square className="h-4 w-4" />
+                          )}
+                        </button>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-white font-medium whitespace-nowrap">
+                        {property.address}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-white/70 whitespace-nowrap">
+                        {property.city}, {property.state}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-white/70 whitespace-nowrap">
+                        {propertyTypeLabels[property.propertyType]}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-white whitespace-nowrap">
+                        {formatCurrency(property.assessedValue)}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-white/70 whitespace-nowrap">
+                        {formatCurrency(property.marketValue)}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-white whitespace-nowrap">
+                        {formatCurrency(property.annualTax)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {appeal ? (
+                          <GlassBadge variant={statusBadgeVariant[appeal.status]}>
+                            {statusLabel[appeal.status]}
+                          </GlassBadge>
                         ) : (
-                          <Square className="h-4 w-4" />
+                          <span className="text-xs text-white/40">--</span>
                         )}
-                      </button>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-white font-medium whitespace-nowrap">
-                      {property.address}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-white/70 whitespace-nowrap">
-                      {property.city}, {property.state}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-white/70 whitespace-nowrap">
-                      {propertyTypeLabels[property.propertyType]}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-white whitespace-nowrap">
-                      {formatCurrency(property.assessedValue)}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-white/70 whitespace-nowrap">
-                      {formatCurrency(property.marketValue)}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-white whitespace-nowrap">
-                      {formatCurrency(property.annualTax)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {appeal ? (
-                        <GlassBadge variant={statusBadgeVariant[appeal.status]}>
-                          {statusLabel[appeal.status]}
-                        </GlassBadge>
-                      ) : (
-                        <span className="text-xs text-white/40">--</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {appeal ? (
-                        <GlassButton variant="ghost" size="sm">
-                          View
-                        </GlassButton>
-                      ) : (
-                        <GlassButton variant="primary" size="sm">
-                          Appeal
-                        </GlassButton>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {appeal ? (
+                          <GlassButton variant="ghost" size="sm">
+                            View
+                          </GlassButton>
+                        ) : (
+                          <GlassButton variant="primary" size="sm">
+                            Appeal
+                          </GlassButton>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
@@ -333,25 +375,33 @@ export default function PortfolioPage() {
           <div>
             <p className="text-sm text-white/50">Total Cost of Appeals</p>
             <p className="mt-1 text-xl font-bold text-white">
-              {formatCurrency(4788)}
+              {stats ? formatCurrency(
+                stats.roi > 0 && stats.potentialSavings > 0
+                  ? Math.round(stats.potentialSavings / (stats.roi / 100))
+                  : 0
+              ) : "--"}
             </p>
           </div>
           <div>
             <p className="text-sm text-white/50">Total Savings Achieved</p>
             <p className="mt-1 text-xl font-bold text-emerald-400">
-              {formatCurrency(16300)}
+              {stats ? formatCurrency(stats.potentialSavings) : "--"}
             </p>
           </div>
           <div>
             <p className="text-sm text-white/50">Net Benefit</p>
             <p className="mt-1 text-xl font-bold text-green-400">
-              {formatCurrency(11512)}
+              {stats ? formatCurrency(
+                stats.roi > 0 && stats.potentialSavings > 0
+                  ? stats.potentialSavings - Math.round(stats.potentialSavings / (stats.roi / 100))
+                  : 0
+              ) : "--"}
             </p>
           </div>
           <div>
             <p className="text-sm text-white/50">Return on Investment</p>
             <p className="mt-1 text-xl font-bold text-teal-400">
-              {formatPercent(340)}
+              {stats ? formatPercent(stats.roi) : "--"}
             </p>
           </div>
         </div>
@@ -360,12 +410,14 @@ export default function PortfolioPage() {
         <div className="mt-6">
           <div className="flex items-center justify-between text-sm mb-2">
             <span className="text-white/60">ROI Progress</span>
-            <span className="text-teal-400 font-medium">340%</span>
+            <span className="text-teal-400 font-medium">
+              {stats ? formatPercent(stats.roi) : "--"}
+            </span>
           </div>
           <div className="h-3 w-full rounded-full bg-[rgba(255,255,255,0.08)] overflow-hidden">
             <div
               className="h-full rounded-full bg-gradient-to-r from-teal-500 to-emerald-500 transition-all duration-700"
-              style={{ width: "100%" }}
+              style={{ width: roiBarWidth }}
             />
           </div>
           <div className="flex justify-between mt-2 text-xs text-white/40">
@@ -373,7 +425,7 @@ export default function PortfolioPage() {
             <span>100%</span>
             <span>200%</span>
             <span>300%</span>
-            <span>340%</span>
+            <span>400%</span>
           </div>
         </div>
       </GlassCard>

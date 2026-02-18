@@ -1,0 +1,189 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ─── Auth Models ──────────────────────────────────────────
+
+model User {
+  id             String    @id @default(cuid())
+  name           String?
+  email          String    @unique
+  emailVerified  DateTime?
+  hashedPassword String?
+  image          String?
+  role           String    @default("homeowner") // homeowner | investor | admin
+  phone          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  accounts   Account[]
+  sessions   Session[]
+  properties Property[]
+  appeals    Appeal[]
+  documents  Document[]
+  chatMessages ChatMessage[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── Core Business Models ─────────────────────────────────
+
+model Property {
+  id                 String   @id @default(cuid())
+  address            String
+  city               String
+  state              String
+  zip                String
+  county             String
+  propertyType       String   // single-family | multi-family | condo | commercial | vacant-land
+  assessedValue      Float
+  marketValue        Float
+  taxRate            Float
+  annualTax          Float
+  yearBuilt          Int
+  sqft               Int
+  bedrooms           Int?
+  bathrooms          Int?
+  lotSize            Int?
+  lastAssessmentDate String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  ownerId  String
+  owner    User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  appeals  Appeal[]
+  documents Document[]
+}
+
+model Appeal {
+  id                 String   @id @default(cuid())
+  status             String   @default("draft") // draft | evidence-gathering | submitted | under-review | hearing-scheduled | hearing-complete | won | lost | withdrawn
+  serviceType        String   // full-service | diy | investor-portfolio
+  priority           String   @default("medium") // low | medium | high | urgent
+  filedDate          String?
+  hearingDate        String?
+  deadline           String?
+  originalAssessment Float
+  targetAssessment   Float
+  finalAssessment    Float?
+  estimatedSavings   Float
+  actualSavings      Float?
+  notes              String?
+  internalNotes      String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  propertyId    String
+  property      Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignedAgent String?
+  agent         Agent?   @relation(fields: [assignedAgent], references: [id])
+  documents     Document[]
+  statusHistory AppealStatusHistory[]
+}
+
+model AppealStatusHistory {
+  id        String   @id @default(cuid())
+  appealId  String
+  appeal    Appeal   @relation(fields: [appealId], references: [id], onDelete: Cascade)
+  fromStatus String?
+  toStatus   String
+  notes      String?
+  changedBy  String?
+  createdAt  DateTime @default(now())
+}
+
+model Agent {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  role          String   @default("agent") // agent | manager | admin
+  avatarUrl     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  appeals Appeal[]
+}
+
+// ─── Document Management ──────────────────────────────────
+
+model Document {
+  id          String   @id @default(cuid())
+  fileName    String
+  fileType    String   // pdf | jpg | png | docx
+  fileSize    Int      // bytes
+  filePath    String   // local path or S3 URL
+  docType     String   // assessment_notice | comparable_sales | appeal_form | property_photo | evidence_packet | hearing_result | other
+  createdAt   DateTime @default(now())
+
+  userId     String?
+  user       User?     @relation(fields: [userId], references: [id])
+  propertyId String?
+  property   Property? @relation(fields: [propertyId], references: [id])
+  appealId   String?
+  appeal     Appeal?   @relation(fields: [appealId], references: [id])
+}
+
+// ─── AI Chat ──────────────────────────────────────────────
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  role      String   // user | assistant
+  content   String
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── Activity Log ─────────────────────────────────────────
+
+model ActivityLog {
+  id         String   @id @default(cuid())
+  action     String
+  entityType String   // appeal | client | property | portfolio | document
+  entityId   String
+  agentName  String?
+  details    String?
+  createdAt  DateTime @default(now())
+}

@@ -1,14 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Eye, EyeOff, Mail, Lock, User } from "lucide-react";
-
-/* ============================================================
-   REGISTER PAGE — Client Component
-   ============================================================ */
+import { Eye, EyeOff, Mail, Lock, User, AlertCircle, CheckCircle2 } from "lucide-react";
+import { signIn } from "next-auth/react";
 
 export default function RegisterPage() {
+  const router = useRouter();
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -21,24 +20,74 @@ export default function RegisterPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError(null);
+
     if (formData.password !== formData.confirmPassword) {
-      alert("Passwords do not match.");
+      setError("Passwords do not match.");
+      return;
+    }
+    if (formData.password.length < 8) {
+      setError("Password must be at least 8 characters.");
       return;
     }
     if (!agreedToTerms) {
-      alert("Please agree to the Terms of Service and Privacy Policy.");
+      setError("Please agree to the Terms of Service and Privacy Policy.");
       return;
     }
-    // In production, this would call a registration API
-    alert("Registration functionality coming soon!");
+
+    setLoading(true);
+
+    try {
+      // Register
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: formData.name,
+          email: formData.email,
+          password: formData.password,
+          role: accountType,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || "Registration failed. Please try again.");
+        return;
+      }
+
+      // Auto-login after registration
+      const loginResult = await signIn("credentials", {
+        email: formData.email,
+        password: formData.password,
+        redirect: false,
+      });
+
+      if (loginResult?.error) {
+        // Registration succeeded but login failed — redirect to login
+        router.push("/login");
+      } else {
+        router.push("/dashboard");
+        router.refresh();
+      }
+    } catch {
+      setError("An unexpected error occurred. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   }
+
+  const passwordStrength = formData.password.length >= 8;
 
   return (
     <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center px-4 py-12">
@@ -57,6 +106,14 @@ export default function RegisterPage() {
             Start saving on your property taxes today
           </p>
         </div>
+
+        {/* Error */}
+        {error && (
+          <div className="mb-5 flex items-center gap-2 bg-red-500/10 border border-red-400/30 rounded-xl px-4 py-3">
+            <AlertCircle className="h-4 w-4 text-red-400 flex-shrink-0" />
+            <p className="text-sm text-red-300">{error}</p>
+          </div>
+        )}
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-5">
@@ -126,6 +183,22 @@ export default function RegisterPage() {
                 )}
               </button>
             </div>
+            {formData.password.length > 0 && (
+              <div className="flex items-center gap-1.5 mt-1.5">
+                <CheckCircle2
+                  className={`h-3.5 w-3.5 ${
+                    passwordStrength ? "text-emerald-400" : "text-white/30"
+                  }`}
+                />
+                <span
+                  className={`text-xs ${
+                    passwordStrength ? "text-emerald-400" : "text-white/40"
+                  }`}
+                >
+                  At least 8 characters
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Confirm Password */}
@@ -218,9 +291,17 @@ export default function RegisterPage() {
           {/* Submit */}
           <button
             type="submit"
-            className="w-full bg-gradient-to-r from-teal-500/40 to-emerald-500/40 backdrop-blur-[12px] border border-[rgba(255,255,255,0.2)] text-white rounded-xl px-5 py-3 font-medium hover:from-teal-500/60 hover:to-emerald-500/60 transition-all duration-300"
+            disabled={loading}
+            className="w-full bg-gradient-to-r from-teal-500/40 to-emerald-500/40 backdrop-blur-[12px] border border-[rgba(255,255,255,0.2)] text-white rounded-xl px-5 py-3 font-medium hover:from-teal-500/60 hover:to-emerald-500/60 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            Create Account
+            {loading ? (
+              <>
+                <div className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                Creating account...
+              </>
+            ) : (
+              "Create Account"
+            )}
           </button>
         </form>
 

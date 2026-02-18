@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Search,
   Building2,
@@ -18,10 +18,88 @@ import { GlassButton } from "@/components/ui/GlassButton";
 import { GlassBadge } from "@/components/ui/GlassBadge";
 import { GlassInput } from "@/components/ui/GlassInput";
 import { GlassSelect } from "@/components/ui/GlassSelect";
-import { mockProperties, mockAdminAppeals } from "@/lib/data";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils/cn";
-import type { Property, AdminAppeal } from "@/lib/types";
+
+/* ------------------------------------------------------------------ */
+/*  API response interfaces                                            */
+/* ------------------------------------------------------------------ */
+interface ApiOwner {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+}
+
+interface ApiProperty {
+  id: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  county: string;
+  propertyType: string;
+  assessedValue: number;
+  marketValue: number;
+  taxRate: number;
+  annualTax: number;
+  yearBuilt: number;
+  sqft: number;
+  bedrooms: number | null;
+  bathrooms: number | null;
+  lotSize: number | null;
+  ownerId: string;
+  lastAssessmentDate: string;
+  createdAt: string;
+  updatedAt: string;
+  owner?: ApiOwner;
+}
+
+interface ApiAppealProperty {
+  id: string;
+  address: string;
+  city: string;
+  state: string;
+  county: string;
+  propertyType: string;
+}
+
+interface ApiAppealUser {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+}
+
+interface ApiAppealAgent {
+  id: string;
+  name: string;
+  email: string;
+}
+
+interface ApiAppeal {
+  id: string;
+  status: string;
+  serviceType: string;
+  filedDate: string | null;
+  hearingDate: string | null;
+  originalAssessment: number;
+  targetAssessment: number;
+  finalAssessment: number | null;
+  estimatedSavings: number;
+  actualSavings: number | null;
+  notes: string | null;
+  priority: string | null;
+  deadline: string | null;
+  propertyId: string;
+  userId: string;
+  agentId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  property: ApiAppealProperty;
+  user: ApiAppealUser;
+  agent: ApiAppealAgent | null;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Property type label / icon                                         */
@@ -34,7 +112,7 @@ const propertyTypeLabels: Record<string, string> = {
   "vacant-land": "Vacant Land",
 };
 
-function PropertyTypeIcon({ type }: { type: Property["propertyType"] }) {
+function PropertyTypeIcon({ type }: { type: string }) {
   const cls = "h-4 w-4 flex-shrink-0";
   switch (type) {
     case "single-family":
@@ -55,14 +133,9 @@ function PropertyTypeIcon({ type }: { type: Property["propertyType"] }) {
 /* ------------------------------------------------------------------ */
 /*  Appeal status for a property                                       */
 /* ------------------------------------------------------------------ */
-function getPropertyAppeal(propertyId: string): AdminAppeal | undefined {
-  return mockAdminAppeals.find((a) => a.propertyId === propertyId);
-}
-
 type AppealStatusLabel = "No Appeal" | "Active Appeal" | "Appeal Won" | "Appeal Lost";
 
-function getAppealStatusLabel(propertyId: string): AppealStatusLabel {
-  const appeal = getPropertyAppeal(propertyId);
+function getAppealStatusLabel(appeal: ApiAppeal | undefined): AppealStatusLabel {
   if (!appeal) return "No Appeal";
   if (appeal.status === "won") return "Appeal Won";
   if (appeal.status === "lost") return "Appeal Lost";
@@ -83,9 +156,9 @@ function appealStatusVariant(label: AppealStatusLabel) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Mock assessment history (3 years)                                  */
+/*  Mock assessment history (3 years) - placeholder                    */
 /* ------------------------------------------------------------------ */
-function mockAssessmentHistory(prop: Property) {
+function mockAssessmentHistory(prop: ApiProperty) {
   const current = prop.assessedValue;
   const prev1 = Math.round(current * 0.93);
   const prev2 = Math.round(current * 0.87);
@@ -105,9 +178,9 @@ function mockAssessmentHistory(prop: Property) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Mock comparable properties                                         */
+/*  Mock comparable properties - placeholder                           */
 /* ------------------------------------------------------------------ */
-function mockComparables(prop: Property) {
+function mockComparables(prop: ApiProperty) {
   return [
     {
       address: `${parseInt(prop.address) + 100} ${prop.address.split(" ").slice(1).join(" ")}`,
@@ -134,6 +207,11 @@ function mockComparables(prop: Property) {
 /*  PAGE                                                               */
 /* ================================================================== */
 export default function AdminPropertiesPage() {
+  /* --- Data state --- */
+  const [properties, setProperties] = useState<ApiProperty[]>([]);
+  const [appeals, setAppeals] = useState<ApiAppeal[]>([]);
+  const [loading, setLoading] = useState(true);
+
   /* --- Filters --- */
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -142,9 +220,28 @@ export default function AdminPropertiesPage() {
   /* --- Expanded row --- */
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  /* --- Fetch data --- */
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/properties").then((r) => r.json()),
+      fetch("/api/appeals").then((r) => r.json()),
+    ])
+      .then(([propertiesData, appealsData]) => {
+        setProperties(Array.isArray(propertiesData) ? propertiesData : []);
+        setAppeals(Array.isArray(appealsData) ? appealsData : []);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  /* --- Helper: get property appeal --- */
+  function getPropertyAppeal(propertyId: string): ApiAppeal | undefined {
+    return appeals.find((a) => a.propertyId === propertyId);
+  }
+
   /* --- Filtered data --- */
   const filtered = useMemo(() => {
-    return mockProperties.filter((p) => {
+    return properties.filter((p) => {
       const q = search.toLowerCase();
       const matchSearch =
         !q ||
@@ -153,12 +250,31 @@ export default function AdminPropertiesPage() {
         p.state.toLowerCase().includes(q);
       const matchType =
         typeFilter === "all" || p.propertyType === typeFilter;
+      const appeal = getPropertyAppeal(p.id);
+      const appealLabel = getAppealStatusLabel(appeal);
       const matchAppeal =
         appealStatusFilter === "all" ||
-        getAppealStatusLabel(p.id) === appealStatusFilter;
+        appealLabel === appealStatusFilter;
       return matchSearch && matchType && matchAppeal;
     });
-  }, [search, typeFilter, appealStatusFilter]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, typeFilter, appealStatusFilter, properties, appeals]);
+
+  /* --- Loading --- */
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-white">Property Management</h1>
+          <p className="mt-1 text-sm text-white/50">Loading...</p>
+        </div>
+        <div className="flex items-center justify-center py-24">
+          <div className="animate-spin h-8 w-8 border-2 border-teal-400 border-t-transparent rounded-full" />
+          <span className="ml-3 text-white/60">Loading properties...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -166,7 +282,7 @@ export default function AdminPropertiesPage() {
       <div>
         <h1 className="text-3xl font-bold text-white">Property Management</h1>
         <p className="mt-1 text-sm text-white/50">
-          {mockProperties.length} total properties
+          {properties.length} total properties
         </p>
       </div>
 
@@ -246,8 +362,8 @@ export default function AdminPropertiesPage() {
             <tbody>
               {filtered.map((prop) => {
                 const isExpanded = expandedId === prop.id;
-                const appealLabel = getAppealStatusLabel(prop.id);
                 const appeal = getPropertyAppeal(prop.id);
+                const appealLabel = getAppealStatusLabel(appeal);
 
                 return (
                   <PropertyRow
@@ -290,9 +406,9 @@ function PropertyRow({
   isExpanded,
   onToggle,
 }: {
-  property: Property;
+  property: ApiProperty;
   appealLabel: AppealStatusLabel;
-  appeal: AdminAppeal | undefined;
+  appeal: ApiAppeal | undefined;
   isExpanded: boolean;
   onToggle: () => void;
 }) {
@@ -314,7 +430,7 @@ function PropertyRow({
           {property.city}, {property.state}
         </td>
         <td className="px-4 py-3 text-sm text-white/70 hidden lg:table-cell">
-          {property.owner || "\u2014"}
+          {property.owner?.name || "\u2014"}
         </td>
         <td className="px-4 py-3">
           <GlassBadge variant="default">
@@ -401,7 +517,7 @@ function PropertyRow({
                             : "N/A"}
                         </p>
                       </div>
-                      {property.bedrooms !== undefined && (
+                      {property.bedrooms != null && (
                         <div>
                           <span className="text-[11px] text-white/40 uppercase">
                             Bed / Bath
@@ -411,7 +527,7 @@ function PropertyRow({
                           </p>
                         </div>
                       )}
-                      {property.lotSize !== undefined && (
+                      {property.lotSize != null && (
                         <div>
                           <span className="text-[11px] text-white/40 uppercase">
                             Lot Size
@@ -429,7 +545,7 @@ function PropertyRow({
                         Owner
                       </span>
                       <p className="text-white/80">
-                        {property.owner || "Unknown"}
+                        {property.owner?.name || "Unknown"}
                       </p>
                     </div>
                   </div>
