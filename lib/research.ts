@@ -1,4 +1,5 @@
 import { createDemoResearch } from "./demo-data";
+import { getLlmConfiguration, llmIsConfigured } from "./llm-config";
 import type {
   AppealCase,
   EvidenceCitation,
@@ -16,7 +17,7 @@ const OPENAI_URL = "https://api.openai.com/v1";
 
 export function liveResearchIsConfigured(): boolean {
   return Boolean(
-    llmApiKey() &&
+    llmIsConfigured() &&
       embeddingIsConfigured() &&
       process.env.QDRANT_URL &&
       process.env.QDRANT_API_KEY &&
@@ -163,26 +164,36 @@ async function generateGroundedAnswer(
   const instructions =
     "You are an internal California property-tax appeal research assistant. Answer only from the supplied evidence. Clearly distinguish evidence from inference. Never invent a ruling, fact, citation, or success probability. Be concise, practical, and state material limitations. Cite source numbers in square brackets.";
   const input = `CASE\n${JSON.stringify(appealCase)}\n\nQUESTION\n${question}\n\nPUBLIC EVIDENCE\n${evidence || "No research passages were returned."}\n\nSIMILAR APPEALS\n${compactCases || "No comparable appeals were returned."}`;
-  const baseUrl = llmBaseUrl();
-  const style = process.env.LLM_API_STYLE ?? "responses";
+  const llm = getLlmConfiguration();
+  const chatOptions = {
+    ...(llm.maxTokens ? { max_tokens: llm.maxTokens } : {}),
+    ...(llm.temperature !== undefined
+      ? { temperature: llm.temperature }
+      : {}),
+    ...(llm.serviceTier ? { service_tier: llm.serviceTier } : {}),
+    ...(llm.reasoningEffort
+      ? { reasoning_effort: llm.reasoningEffort }
+      : {}),
+  };
   const response =
-    style === "chat-completions"
-      ? await fetchWithTimeout(`${baseUrl}/chat/completions`, {
+    llm.style === "chat-completions"
+      ? await fetchWithTimeout(`${llm.baseUrl}/chat/completions`, {
           method: "POST",
-          headers: bearerHeaders(llmApiKey()),
+          headers: bearerHeaders(llm.apiKey),
           body: JSON.stringify({
-            model: llmModel(),
+            model: llm.model,
             messages: [
               { role: "system", content: instructions },
               { role: "user", content: input },
             ],
+            ...chatOptions,
           }),
         })
-      : await fetchWithTimeout(`${baseUrl}/responses`, {
+      : await fetchWithTimeout(`${llm.baseUrl}/responses`, {
           method: "POST",
-          headers: bearerHeaders(llmApiKey()),
+          headers: bearerHeaders(llm.apiKey),
           body: JSON.stringify({
-            model: llmModel(),
+            model: llm.model,
             store: false,
             instructions,
             input,
@@ -220,18 +231,6 @@ function bearerHeaders(apiKey: string | undefined): Record<string, string> {
   };
 }
 
-function llmApiKey(): string | undefined {
-  return process.env.LLM_API_KEY ?? process.env.OPENAI_API_KEY;
-}
-
-function llmBaseUrl(): string {
-  return (process.env.LLM_API_BASE_URL ?? OPENAI_URL).replace(/\/+$/, "");
-}
-
-function llmModel(): string {
-  return process.env.LLM_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-5.6-sol";
-}
-
 function embeddingApiKey(): string | undefined {
   return process.env.EMBEDDING_API_KEY ?? process.env.OPENAI_API_KEY;
 }
@@ -240,7 +239,7 @@ function embeddingBaseUrl(): string {
   return (process.env.EMBEDDING_API_BASE_URL ?? OPENAI_URL).replace(/\/+$/, "");
 }
 
-function embeddingIsConfigured(): boolean {
+export function embeddingIsConfigured(): boolean {
   return Boolean(embeddingApiKey());
 }
 

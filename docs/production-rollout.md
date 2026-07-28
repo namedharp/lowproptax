@@ -6,13 +6,17 @@ Rotate every credential previously pasted into chat, including the Qdrant key,
 LLM key, and private-server password. Store replacements only in the hosting
 runtime or the server's secret manager.
 
-The LLM credential cannot be activated until these values are known:
+The answer provider is now defined:
 
-- provider name
-- API base URL
-- API style: `responses` or `chat-completions`
-- model name
-- whether the provider also offers 1,536-dimensional embeddings
+- provider: DeepInfra
+- API base URL: `https://api.deepinfra.com/v1/openai`
+- API style: `chat-completions`
+- model: `deepseek-ai/DeepSeek-V4-Flash`
+
+The DeepInfra key remains server-only and must be rotated before production
+because the original value was pasted into chat. Live retrieval still requires
+a separate 1,536-dimensional embedding provider, or a versioned re-index of the
+Qdrant collections with a different vector size.
 
 ## 2. Review Supabase security
 
@@ -64,6 +68,8 @@ Required for live mode:
 - `LLM_API_STYLE`
 - `LLM_MODEL`
 - `LLM_API_KEY`
+- optional `LLM_SERVICE_TIER`, `LLM_REASONING_EFFORT`, `LLM_TEMPERATURE`, and
+  `LLM_MAX_TOKENS`
 - compatible embedding provider settings
 
 ## 5. Start incremental FOIA synchronization

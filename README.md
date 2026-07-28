@@ -11,8 +11,8 @@ gaps.
   source inventory.
 - A working fictional-data mode for safe evaluation.
 - A server-side evidence pipeline that embeds the case question, searches the
-  existing `lpt_research` and `appeal_comps` Qdrant collections, and asks the
-  OpenAI Responses API for a grounded answer.
+  existing `lpt_research` and `appeal_comps` Qdrant collections, and asks
+  DeepInfra's `deepseek-ai/DeepSeek-V4-Flash` model for a grounded answer.
 - A Supabase migration that extends the existing `appeals`, `properties`, and
   `appeal_documents` schema with private research history, feedback, evidence
   checklists, ingestion tracking, and a private case-document bucket.
@@ -35,7 +35,9 @@ The existing Qdrant collections use 1,536-dimensional vectors, so the default
 query model is `text-embedding-3-small`. Changing to a 384-dimensional model
 requires a versioned re-index into new collections.
 
-The answer model may be any OpenAI-compatible provider. Configure
+DeepInfra is the configured answer provider. Its OpenAI-compatible endpoint uses
+`https://api.deepinfra.com/v1/openai`, the `chat-completions` API style, and
+`deepseek-ai/DeepSeek-V4-Flash`. Configure
 `LLM_API_BASE_URL`, `LLM_API_STYLE` (`responses` or `chat-completions`),
 `LLM_MODEL`, and `LLM_API_KEY`. Chat credentials and embedding credentials are
 separate because some providers do not offer a compatible 1,536-dimensional

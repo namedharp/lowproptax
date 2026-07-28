@@ -51,7 +51,10 @@ test("returns safe integration health without credentials", async () => {
   assert.equal(body.mode, "demo");
   assert.deepEqual(body.integrations, {
     qdrant: false,
-    openai: false,
+    llm: false,
+    llmProvider: "deepinfra",
+    llmModel: "deepseek-ai/DeepSeek-V4-Flash",
+    embeddings: false,
     supabase: false,
     caseData: false,
     analystAccess: true,
