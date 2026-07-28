@@ -1,7 +1,7 @@
 {
   "name": "LPT App",
   "image": "mcr.microsoft.com/devcontainers/javascript-node:20",
-  "postCreateCommand": "cd lpt-app && npm install",
+  "postCreateCommand": "npm install",
   "forwardPorts": [3000],
   "customizations": {
     "vscode": {
