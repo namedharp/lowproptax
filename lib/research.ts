@@ -16,7 +16,8 @@ const OPENAI_URL = "https://api.openai.com/v1";
 
 export function liveResearchIsConfigured(): boolean {
   return Boolean(
-    process.env.OPENAI_API_KEY &&
+    llmApiKey() &&
+      embeddingIsConfigured() &&
       process.env.QDRANT_URL &&
       process.env.QDRANT_API_KEY &&
       process.env.DEMO_MODE !== "true",
@@ -79,14 +80,20 @@ export async function researchAppeal(
 }
 
 async function createEmbedding(input: string): Promise<number[]> {
-  const response = await fetchWithTimeout(`${OPENAI_URL}/embeddings`, {
+  const response = await fetchWithTimeout(
+    `${embeddingBaseUrl()}/embeddings`,
+    {
     method: "POST",
-    headers: openAIHeaders(),
+    headers: bearerHeaders(embeddingApiKey()),
     body: JSON.stringify({
-      model: process.env.OPENAI_EMBEDDING_MODEL ?? "text-embedding-3-small",
+      model:
+        process.env.EMBEDDING_MODEL ??
+        process.env.OPENAI_EMBEDDING_MODEL ??
+        "text-embedding-3-small",
       input: input.slice(0, 12000),
     }),
-  });
+    },
+  );
 
   if (!response.ok) {
     throw new Error(`Embedding request failed (${response.status}).`);
@@ -153,17 +160,34 @@ async function generateGroundedAnswer(
     )
     .join("\n");
 
-  const response = await fetchWithTimeout(`${OPENAI_URL}/responses`, {
-    method: "POST",
-    headers: openAIHeaders(),
-    body: JSON.stringify({
-      model: process.env.OPENAI_MODEL ?? "gpt-5.6-sol",
-      store: false,
-      instructions:
-        "You are an internal California property-tax appeal research assistant. Answer only from the supplied evidence. Clearly distinguish evidence from inference. Never invent a ruling, fact, citation, or success probability. Be concise, practical, and state material limitations. Cite source numbers in square brackets.",
-      input: `CASE\n${JSON.stringify(appealCase)}\n\nQUESTION\n${question}\n\nPUBLIC EVIDENCE\n${evidence || "No research passages were returned."}\n\nSIMILAR APPEALS\n${compactCases || "No comparable appeals were returned."}`,
-    }),
-  });
+  const instructions =
+    "You are an internal California property-tax appeal research assistant. Answer only from the supplied evidence. Clearly distinguish evidence from inference. Never invent a ruling, fact, citation, or success probability. Be concise, practical, and state material limitations. Cite source numbers in square brackets.";
+  const input = `CASE\n${JSON.stringify(appealCase)}\n\nQUESTION\n${question}\n\nPUBLIC EVIDENCE\n${evidence || "No research passages were returned."}\n\nSIMILAR APPEALS\n${compactCases || "No comparable appeals were returned."}`;
+  const baseUrl = llmBaseUrl();
+  const style = process.env.LLM_API_STYLE ?? "responses";
+  const response =
+    style === "chat-completions"
+      ? await fetchWithTimeout(`${baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: bearerHeaders(llmApiKey()),
+          body: JSON.stringify({
+            model: llmModel(),
+            messages: [
+              { role: "system", content: instructions },
+              { role: "user", content: input },
+            ],
+          }),
+        })
+      : await fetchWithTimeout(`${baseUrl}/responses`, {
+          method: "POST",
+          headers: bearerHeaders(llmApiKey()),
+          body: JSON.stringify({
+            model: llmModel(),
+            store: false,
+            instructions,
+            input,
+          }),
+        });
 
   if (!response.ok) {
     throw new Error(`Answer generation failed (${response.status}).`);
@@ -171,12 +195,14 @@ async function generateGroundedAnswer(
 
   const data = (await response.json()) as {
     output_text?: string;
+    choices?: Array<{ message?: { content?: string } }>;
     output?: Array<{
       content?: Array<{ type?: string; text?: string }>;
     }>;
   };
   const text =
     data.output_text ??
+    data.choices?.[0]?.message?.content ??
     data.output
       ?.flatMap((item) => item.content ?? [])
       .filter((item) => item.type === "output_text")
@@ -187,11 +213,35 @@ async function generateGroundedAnswer(
   return text.trim();
 }
 
-function openAIHeaders(): Record<string, string> {
+function bearerHeaders(apiKey: string | undefined): Record<string, string> {
   return {
-    authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+    authorization: `Bearer ${apiKey}`,
     "content-type": "application/json",
   };
+}
+
+function llmApiKey(): string | undefined {
+  return process.env.LLM_API_KEY ?? process.env.OPENAI_API_KEY;
+}
+
+function llmBaseUrl(): string {
+  return (process.env.LLM_API_BASE_URL ?? OPENAI_URL).replace(/\/+$/, "");
+}
+
+function llmModel(): string {
+  return process.env.LLM_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-5.6-sol";
+}
+
+function embeddingApiKey(): string | undefined {
+  return process.env.EMBEDDING_API_KEY ?? process.env.OPENAI_API_KEY;
+}
+
+function embeddingBaseUrl(): string {
+  return (process.env.EMBEDDING_API_BASE_URL ?? OPENAI_URL).replace(/\/+$/, "");
+}
+
+function embeddingIsConfigured(): boolean {
+  return Boolean(embeddingApiKey());
 }
 
 function buildSearchText(question: string, appealCase: AppealCase): string {

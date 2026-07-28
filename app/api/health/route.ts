@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { analystAccessIsConfigured } from "@/lib/auth";
+import { liveCaseDataIsConfigured } from "@/lib/cases";
 import { liveResearchIsConfigured } from "@/lib/research";
 
 export function GET() {
@@ -10,8 +12,10 @@ export function GET() {
       openai: Boolean(process.env.OPENAI_API_KEY),
       supabase: Boolean(
         process.env.NEXT_PUBLIC_SUPABASE_URL &&
-          process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+          process.env.SUPABASE_SECRET_KEY,
       ),
+      caseData: liveCaseDataIsConfigured(),
+      analystAccess: analystAccessIsConfigured(),
     },
   });
 }

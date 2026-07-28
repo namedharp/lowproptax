@@ -1,144 +1,155 @@
--- Private analyst case data. Public FOIA evidence remains in Qdrant.
-create extension if not exists pgcrypto;
+-- Extends the existing FOIA REQUESTS project without duplicating its appeals,
+-- properties, documents, tenants, or user tables.
 
-create table public.appeal_cases (
-  id uuid primary key default gen_random_uuid(),
-  case_number text not null unique,
-  county text not null,
-  parcel_number text not null,
-  property_name text not null,
-  property_address text,
-  property_type text,
-  tax_year text not null,
-  status text not null default 'researching'
-    check (status in ('researching', 'evidence_review', 'ready_to_file', 'filed', 'closed')),
-  enrolled_value numeric(14, 2),
-  requested_value numeric(14, 2),
-  filing_deadline date,
-  case_theory text,
-  assigned_to uuid references auth.users(id),
-  created_by uuid not null default auth.uid() references auth.users(id),
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
+alter table public.appeals
+  add column if not exists appeal_number text,
+  add column if not exists external_id text,
+  add column if not exists source_system text not null default 'supabase',
+  add column if not exists assigned_to uuid references auth.users(id),
+  add column if not exists case_theory text,
+  add column if not exists confidence smallint
+    check (confidence between 0 and 100);
 
-create table public.case_research_runs (
+create unique index if not exists appeals_appeal_number_unique_idx
+  on public.appeals (appeal_number)
+  where appeal_number is not null;
+create unique index if not exists appeals_source_external_unique_idx
+  on public.appeals (source_system, external_id)
+  where external_id is not null;
+create index if not exists appeals_deadline_status_idx
+  on public.appeals (filing_deadline, status);
+
+create table if not exists public.case_research_runs (
   id uuid primary key default gen_random_uuid(),
-  case_id uuid not null references public.appeal_cases(id) on delete cascade,
+  appeal_id uuid not null references public.appeals(id) on delete cascade,
   question text not null check (char_length(question) between 5 and 2000),
-  answer text,
+  answer text not null,
   confidence smallint check (confidence between 0 and 100),
   citations jsonb not null default '[]'::jsonb,
   similar_appeals jsonb not null default '[]'::jsonb,
   evidence_gaps jsonb not null default '[]'::jsonb,
+  retrieval_metadata jsonb not null default '{}'::jsonb,
   model text,
-  created_by uuid not null default auth.uid() references auth.users(id),
+  analyst_email text not null,
+  created_by uuid references auth.users(id),
   created_at timestamptz not null default now()
 );
 
-create table public.case_documents (
+create table if not exists public.research_feedback (
   id uuid primary key default gen_random_uuid(),
-  case_id uuid not null references public.appeal_cases(id) on delete cascade,
-  storage_path text not null,
-  display_name text not null,
+  research_run_id uuid not null
+    references public.case_research_runs(id) on delete cascade,
+  rating smallint not null check (rating in (-1, 1)),
+  note text check (note is null or char_length(note) <= 2000),
+  analyst_email text not null,
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now(),
+  unique (research_run_id, analyst_email)
+);
+
+create table if not exists public.case_evidence_items (
+  id uuid primary key default gen_random_uuid(),
+  appeal_id uuid not null references public.appeals(id) on delete cascade,
+  label text not null,
+  status text not null default 'missing'
+    check (status in ('missing', 'requested', 'received', 'reviewed', 'not_applicable')),
+  document_id uuid references public.appeal_documents(id) on delete set null,
+  notes text,
+  due_date date,
+  sort_order integer not null default 0,
+  updated_by_email text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.foia_ingestion_sources (
+  id uuid primary key default gen_random_uuid(),
+  source_type text not null
+    check (source_type in ('google_drive', 'local_sync', 'url', 'manual')),
+  external_id text not null,
+  title text not null,
+  county text,
   document_type text,
-  visibility text not null default 'private'
-    check (visibility in ('private', 'public_foia')),
-  uploaded_by uuid not null default auth.uid() references auth.users(id),
+  source_url text,
+  visibility text not null default 'public_foia'
+    check (visibility in ('public_foia', 'private_case')),
+  content_hash text,
+  source_modified_at timestamptz,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (source_type, external_id)
+);
+
+create table if not exists public.foia_ingestion_jobs (
+  id uuid primary key default gen_random_uuid(),
+  source_id uuid not null
+    references public.foia_ingestion_sources(id) on delete cascade,
+  status text not null default 'queued'
+    check (status in ('queued', 'extracting', 'embedding', 'indexed', 'skipped', 'failed')),
+  qdrant_collection text,
+  page_count integer,
+  chunk_count integer,
+  qdrant_point_ids text[] not null default '{}',
+  error_code text,
+  error_message text,
+  started_at timestamptz,
+  finished_at timestamptz,
   created_at timestamptz not null default now()
 );
 
-create index appeal_cases_county_status_idx
-  on public.appeal_cases (county, status);
-create index appeal_cases_deadline_idx
-  on public.appeal_cases (filing_deadline);
-create index case_research_runs_case_created_idx
-  on public.case_research_runs (case_id, created_at desc);
-create index case_documents_case_idx
-  on public.case_documents (case_id);
+create index if not exists case_research_runs_appeal_created_idx
+  on public.case_research_runs (appeal_id, created_at desc);
+create index if not exists case_evidence_items_appeal_sort_idx
+  on public.case_evidence_items (appeal_id, sort_order, created_at);
+create index if not exists foia_sources_county_type_idx
+  on public.foia_ingestion_sources (county, document_type);
+create index if not exists foia_jobs_source_created_idx
+  on public.foia_ingestion_jobs (source_id, created_at desc);
 
-alter table public.appeal_cases enable row level security;
+insert into storage.buckets (
+  id,
+  name,
+  public,
+  file_size_limit,
+  allowed_mime_types
+)
+values (
+  'case-documents',
+  'case-documents',
+  false,
+  10485760,
+  array[
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'image/jpeg',
+    'image/png',
+    'text/csv',
+    'text/plain'
+  ]
+)
+on conflict (id) do update
+set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
 alter table public.case_research_runs enable row level security;
-alter table public.case_documents enable row level security;
+alter table public.research_feedback enable row level security;
+alter table public.case_evidence_items enable row level security;
+alter table public.foia_ingestion_sources enable row level security;
+alter table public.foia_ingestion_jobs enable row level security;
 
-revoke all on public.appeal_cases from anon;
-revoke all on public.case_research_runs from anon;
-revoke all on public.case_documents from anon;
+-- The application uses these tables only through authenticated server routes.
+-- service_role bypasses RLS; browser roles receive no direct table privileges.
+revoke all on public.case_research_runs from anon, authenticated;
+revoke all on public.research_feedback from anon, authenticated;
+revoke all on public.case_evidence_items from anon, authenticated;
+revoke all on public.foia_ingestion_sources from anon, authenticated;
+revoke all on public.foia_ingestion_jobs from anon, authenticated;
 
-grant select, insert, update on public.appeal_cases to authenticated;
-grant select, insert on public.case_research_runs to authenticated;
-grant select, insert, update, delete on public.case_documents to authenticated;
-
--- Roles belong in app_metadata because users cannot edit it themselves.
-create policy "analysts can read cases"
-  on public.appeal_cases for select
-  to authenticated
-  using ((auth.jwt() -> 'app_metadata' ->> 'role') in ('analyst', 'admin'));
-
-create policy "analysts can create cases"
-  on public.appeal_cases for insert
-  to authenticated
-  with check (
-    (auth.jwt() -> 'app_metadata' ->> 'role') in ('analyst', 'admin')
-    and created_by = auth.uid()
-  );
-
-create policy "assigned analysts and admins can update cases"
-  on public.appeal_cases for update
-  to authenticated
-  using (
-    (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
-    or assigned_to = auth.uid()
-  )
-  with check (
-    (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
-    or assigned_to = auth.uid()
-  );
-
-create policy "analysts can read research"
-  on public.case_research_runs for select
-  to authenticated
-  using (
-    (auth.jwt() -> 'app_metadata' ->> 'role') in ('analyst', 'admin')
-    and exists (
-      select 1 from public.appeal_cases c where c.id = case_id
-    )
-  );
-
-create policy "analysts can create research"
-  on public.case_research_runs for insert
-  to authenticated
-  with check (
-    (auth.jwt() -> 'app_metadata' ->> 'role') in ('analyst', 'admin')
-    and created_by = auth.uid()
-    and exists (
-      select 1 from public.appeal_cases c where c.id = case_id
-    )
-  );
-
-create policy "analysts can read case documents"
-  on public.case_documents for select
-  to authenticated
-  using (
-    (auth.jwt() -> 'app_metadata' ->> 'role') in ('analyst', 'admin')
-    and exists (
-      select 1 from public.appeal_cases c where c.id = case_id
-    )
-  );
-
-create policy "analysts can manage their uploads"
-  on public.case_documents for all
-  to authenticated
-  using (
-    (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
-    or uploaded_by = auth.uid()
-  )
-  with check (
-    (auth.jwt() -> 'app_metadata' ->> 'role') in ('analyst', 'admin')
-    and uploaded_by = auth.uid()
-  );
-
-create or replace function public.set_updated_at()
+create or replace function public.lpt_set_updated_at()
 returns trigger
 language plpgsql
 security invoker
@@ -150,6 +161,14 @@ begin
 end;
 $$;
 
-create trigger appeal_cases_set_updated_at
-before update on public.appeal_cases
-for each row execute function public.set_updated_at();
+drop trigger if exists case_evidence_items_set_updated_at
+  on public.case_evidence_items;
+create trigger case_evidence_items_set_updated_at
+before update on public.case_evidence_items
+for each row execute function public.lpt_set_updated_at();
+
+drop trigger if exists foia_ingestion_sources_set_updated_at
+  on public.foia_ingestion_sources;
+create trigger foia_ingestion_sources_set_updated_at
+before update on public.foia_ingestion_sources
+for each row execute function public.lpt_set_updated_at();

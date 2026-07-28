@@ -1,0 +1,17 @@
+{
+  "documents": [
+    {
+      "sourceId": "drive-file-id-or-stable-source-id",
+      "title": "Fresno County Findings of Fact 2024",
+      "county": "Fresno County",
+      "documentType": "findings",
+      "sourceUrl": "https://drive.google.com/example",
+      "visibility": "public_foia",
+      "modifiedAt": "2026-07-28T00:00:00Z",
+      "text": "Paste or export the extracted public-record text here. The production Drive worker will supply this field after OCR and extraction.",
+      "metadata": {
+        "tax_year": 2024
+      }
+    }
+  ]
+}

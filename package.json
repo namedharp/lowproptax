@@ -10,8 +10,11 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
+    "test": "npm run build && node --import tsx --test tests/rendered-html.test.mjs tests/ingestion.test.ts",
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "ingest:foia": "tsx scripts/ingest-foia.ts",
+    "ingest:preview": "tsx scripts/ingest-foia.ts --dry-run",
+    "sync:drive": "tsx scripts/sync-google-drive.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.111.0",
@@ -30,8 +33,11 @@
     "@vitejs/plugin-rsc": "0.5.26",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.12",
+    "google-auth-library": "10.9.1",
+    "pdfjs-dist": "6.2.108",
     "react-server-dom-webpack": "19.2.6",
     "tailwindcss": "4.2.1",
+    "tsx": "4.23.1",
     "typescript": "5.9.3",
     "vinext": "0.0.50",
     "vite": "8.0.13",

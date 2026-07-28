@@ -13,9 +13,9 @@ gaps.
 - A server-side evidence pipeline that embeds the case question, searches the
   existing `lpt_research` and `appeal_comps` Qdrant collections, and asks the
   OpenAI Responses API for a grounded answer.
-- A Supabase migration for private cases, research history, and case documents,
-  including row-level policies restricted to `analyst` and `admin` roles stored
-  in trusted auth metadata.
+- A Supabase migration that extends the existing `appeals`, `properties`, and
+  `appeal_documents` schema with private research history, feedback, evidence
+  checklists, ingestion tracking, and a private case-document bucket.
 - Health and research API routes with input validation, timeouts, and no browser
   exposure of private keys.
 
@@ -29,32 +29,60 @@ gaps.
 
 ## Enable live evidence research
 
-Set `DEMO_MODE=false` and provide server-side OpenAI and Qdrant credentials.
+Set `DEMO_MODE=false` and provide server-side LLM, embedding, and Qdrant
+credentials.
 The existing Qdrant collections use 1,536-dimensional vectors, so the default
 query model is `text-embedding-3-small`. Changing to a 384-dimensional model
 requires a versioned re-index into new collections.
 
-Never prefix the OpenAI key, Qdrant key, or Supabase secret key with
+The answer model may be any OpenAI-compatible provider. Configure
+`LLM_API_BASE_URL`, `LLM_API_STYLE` (`responses` or `chat-completions`),
+`LLM_MODEL`, and `LLM_API_KEY`. Chat credentials and embedding credentials are
+separate because some providers do not offer a compatible 1,536-dimensional
+embedding model.
+
+Never prefix an LLM key, Qdrant key, or Supabase secret key with
 `NEXT_PUBLIC_`. Those values must remain server-only.
 
 ## Supabase
 
-The migration under `supabase/migrations` creates the private case layer. Review
+The migration under `supabase/migrations` extends the private case layer. Review
 it against a staging project before applying it:
 
 ```sh
 npx supabase@2.110.0 db push
 ```
 
-Analyst authorization uses `app_metadata.role`, not editable user metadata.
-Assign either `analyst` or `admin` to authorized staff accounts. The anonymous
-role has no grants on the new tables.
+New research and ingestion tables are available only through authenticated
+server routes; browser roles receive no direct grants. Live access also requires
+`ANALYST_EMAIL_ALLOWLIST`.
+
+The connected project currently has existing security-advisor findings. Review
+`docs/supabase-security-review.sql` before changing those policies—the file is
+intentionally outside the automatic migrations folder.
+
+## FOIA ingestion
+
+1. Set `GOOGLE_DRIVE_FOLDER_ID`.
+2. Configure `GOOGLE_APPLICATION_CREDENTIALS` to a read-only service-account
+   file outside the repository, or use `GOOGLE_DRIVE_API_KEY` for a public
+   folder.
+3. Run `npm run sync:drive`.
+4. Review the generated manifest and skipped/OCR-required files.
+5. Run `npm run ingest:preview -- work/foia-drive-manifest.json`.
+6. Run `npm run ingest:foia -- work/foia-drive-manifest.json` only after the
+   preview is correct and server-side embedding/Qdrant keys are configured.
+
+The indexer refuses to place `private_case` documents in the public FOIA
+collection, creates stable point IDs for safe re-runs, and preserves source
+hashes, file IDs, county, document type, and chunk position.
 
 ## Verify
 
 ```sh
 npm run lint
 npm test
+npm run ingest:preview -- examples/foia-manifest.example.json
 ```
 
 ## Important data boundaries
@@ -64,3 +92,5 @@ npm test
 - The model receives only the minimum case context needed for the question.
 - Generated answers are research aids, not legal conclusions, and must retain
   citations to the underlying record.
+- Analyst questions, answers, feedback, evidence status, and private uploads are
+  stored separately from the public Qdrant corpus.

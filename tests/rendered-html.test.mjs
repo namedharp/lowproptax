@@ -53,6 +53,8 @@ test("returns safe integration health without credentials", async () => {
     qdrant: false,
     openai: false,
     supabase: false,
+    caseData: false,
+    analystAccess: true,
   });
 });
 
@@ -67,4 +69,41 @@ test("validates research questions", async () => {
   });
   assert.equal(response.status, 400);
   assert.match((await response.json()).error, /between 5 and 2,000/);
+});
+
+test("lists fictional cases through the same API used by live data", async () => {
+  const response = await request("/api/cases", {
+    headers: { accept: "application/json" },
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.mode, "demo");
+  assert.equal(body.cases.length, 3);
+  assert.equal(body.cases[0].county, "Fresno");
+});
+
+test("creates a safe demo case through the production-shaped API", async () => {
+  const response = await request("/api/cases", {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      address: "100 Test Plaza",
+      city: "Fresno",
+      county: "Fresno",
+      parcel: "000-000-001",
+      propertyType: "Office",
+      taxYear: 2026,
+      assessedValue: 5000000,
+      requestedValue: 4200000,
+      filingDeadline: "2026-09-15",
+    }),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.case.county, "Fresno");
+  assert.equal(body.case.requestedValue, 4200000);
+  assert.equal(body.case.source, "demo");
 });

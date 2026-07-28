@@ -15,6 +15,7 @@ export type AppealCase = {
   issue: string;
   confidence: number;
   lastActivity: string;
+  source?: "demo" | "supabase";
 };
 
 export type SimilarCase = {
@@ -45,4 +46,34 @@ export type ResearchResult = {
   citations: EvidenceCitation[];
   gaps: string[];
   generatedAt: string;
+  runId?: string;
+};
+
+export type ResearchHistoryItem = {
+  id: string;
+  question: string;
+  answer: string;
+  confidence: number;
+  model: string | null;
+  analystEmail: string;
+  createdAt: string;
+};
+
+export type EvidenceItem = {
+  id: string;
+  appealId: string;
+  label: string;
+  status: "missing" | "requested" | "received" | "reviewed" | "not_applicable";
+  notes: string | null;
+  dueDate: string | null;
+  sortOrder: number;
+};
+
+export type CaseDocument = {
+  id: string;
+  appealId: string;
+  documentType: string;
+  title: string;
+  fileName: string | null;
+  createdAt: string;
 };

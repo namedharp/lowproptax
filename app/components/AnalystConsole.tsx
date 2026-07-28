@@ -1,13 +1,19 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   createDemoResearch,
   demoCases,
   demoCitations,
   demoSimilarCases,
 } from "@/lib/demo-data";
-import type { AppealCase, ResearchResult } from "@/lib/types";
+import type {
+  AppealCase,
+  CaseDocument,
+  EvidenceItem,
+  ResearchHistoryItem,
+  ResearchResult,
+} from "@/lib/types";
 
 type Section = "workspace" | "cases" | "research" | "sources";
 
@@ -17,12 +23,25 @@ const quickQuestions = [
   "How have boards treated sustained vacancy near the lien date?",
 ];
 
-export function AnalystConsole({ analystName }: { analystName: string }) {
+export function AnalystConsole({
+  analystName,
+  initialCases,
+  dataMode,
+}: {
+  analystName: string;
+  initialCases: AppealCase[];
+  dataMode: "demo" | "live";
+}) {
   const [section, setSection] = useState<Section>("workspace");
-  const [selectedId, setSelectedId] = useState(demoCases[0].id);
+  const [cases, setCases] = useState(
+    initialCases.length || dataMode === "live" ? initialCases : demoCases,
+  );
+  const [selectedId, setSelectedId] = useState(
+    initialCases[0]?.id ?? (dataMode === "demo" ? demoCases[0].id : ""),
+  );
   const selectedCase = useMemo(
-    () => demoCases.find((item) => item.id === selectedId) ?? demoCases[0],
-    [selectedId],
+    () => cases.find((item) => item.id === selectedId) ?? cases[0],
+    [cases, selectedId],
   );
   const [question, setQuestion] = useState(
     "What evidence has driven successful outcomes in similar cases?",
@@ -30,17 +49,72 @@ export function AnalystConsole({ analystName }: { analystName: string }) {
   const [result, setResult] = useState<ResearchResult>(() =>
     createDemoResearch(
       "What evidence has driven successful outcomes in similar cases?",
-      demoCases[0],
+      initialCases[0] ?? demoCases[0],
     ),
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [editOpen, setEditOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [history, setHistory] = useState<ResearchHistoryItem[]>([]);
+  const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
+  const [documents, setDocuments] = useState<CaseDocument[]>([]);
+  const [feedbackState, setFeedbackState] = useState<"idle" | "saving" | "saved">(
+    "idle",
+  );
+
+  useEffect(() => {
+    if (!selectedCase || dataMode !== "live") {
+      return;
+    }
+    const controller = new AbortController();
+    void Promise.all([
+      fetch(
+        `/api/research/history?appealId=${encodeURIComponent(selectedCase.id)}`,
+        { signal: controller.signal },
+      ).then(async (response) => {
+        if (response.ok) {
+          const data = (await response.json()) as {
+            history?: ResearchHistoryItem[];
+          };
+          setHistory(data.history ?? []);
+        }
+      }),
+      fetch(`/api/cases/${encodeURIComponent(selectedCase.id)}/evidence`, {
+        signal: controller.signal,
+      }).then(async (response) => {
+        if (response.ok) {
+          const data = (await response.json()) as { items?: EvidenceItem[] };
+          setEvidenceItems(data.items ?? []);
+        }
+      }),
+      fetch(`/api/cases/${encodeURIComponent(selectedCase.id)}/documents`, {
+        signal: controller.signal,
+      }).then(async (response) => {
+        if (response.ok) {
+          const data = (await response.json()) as {
+            documents?: CaseDocument[];
+          };
+          setDocuments(data.documents ?? []);
+        }
+      }),
+    ]).catch((loadError: unknown) => {
+      if (
+        !(loadError instanceof DOMException && loadError.name === "AbortError")
+      ) {
+        console.error("Case details could not be loaded", loadError);
+      }
+    });
+    return () => controller.abort();
+  }, [dataMode, selectedCase]);
 
   async function runResearch(nextQuestion: string) {
+    if (!selectedCase) return;
     const cleanQuestion = nextQuestion.trim();
     if (cleanQuestion.length < 5) return;
     setLoading(true);
     setError("");
+    setFeedbackState("idle");
     try {
       const response = await fetch("/api/research", {
         method: "POST",
@@ -82,7 +156,111 @@ export function AnalystConsole({ analystName }: { analystName: string }) {
         appealCase,
       ),
     );
+    setFeedbackState("idle");
     setSection("workspace");
+  }
+
+  async function saveCase(update: {
+    requestedValue: number;
+    caseTheory: string;
+    confidence: number;
+    status: AppealCase["status"];
+  }) {
+    if (!selectedCase) return;
+    const response = await fetch(
+      `/api/cases/${encodeURIComponent(selectedCase.id)}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          requestedValue: update.requestedValue,
+          caseTheory: update.caseTheory,
+          confidence: update.confidence,
+          status: update.status.toLowerCase().replaceAll(" ", "_"),
+        }),
+      },
+    );
+    const data = (await response.json()) as { error?: string };
+    if (!response.ok) throw new Error(data.error ?? "Case update failed.");
+    setCases((current) =>
+      current.map((item) =>
+        item.id === selectedCase.id
+          ? {
+              ...item,
+              requestedValue: update.requestedValue,
+              issue: update.caseTheory,
+              confidence: update.confidence,
+              status: update.status,
+              lastActivity: "Just now",
+            }
+          : item,
+      ),
+    );
+    setEditOpen(false);
+  }
+
+  async function submitFeedback(rating: -1 | 1) {
+    if (!result.runId) {
+      setFeedbackState("saved");
+      return;
+    }
+    setFeedbackState("saving");
+    const response = await fetch("/api/research/feedback", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ runId: result.runId, rating }),
+    });
+    setFeedbackState(response.ok ? "saved" : "idle");
+  }
+
+  async function uploadDocument(file: File, title: string, documentType: string) {
+    if (!selectedCase) return;
+    const form = new FormData();
+    form.set("file", file);
+    form.set("title", title);
+    form.set("documentType", documentType);
+    const response = await fetch(
+      `/api/cases/${encodeURIComponent(selectedCase.id)}/documents`,
+      { method: "POST", body: form },
+    );
+    const data = (await response.json()) as {
+      document?: CaseDocument;
+      error?: string;
+    };
+    if (!response.ok) {
+      throw new Error(data.error ?? "Document upload failed.");
+    }
+    if (data.document) {
+      setDocuments((current) => [data.document!, ...current]);
+    }
+  }
+
+  async function createCase(input: {
+    address: string;
+    city: string;
+    county: string;
+    parcel: string;
+    propertyType: string;
+    taxYear: number;
+    assessedValue: number;
+    requestedValue: number;
+    filingDeadline?: string;
+  }) {
+    const response = await fetch("/api/cases", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    const data = (await response.json()) as {
+      case?: AppealCase;
+      error?: string;
+    };
+    if (!response.ok || !data.case) {
+      throw new Error(data.error ?? "Case creation failed.");
+    }
+    setCases((current) => [data.case!, ...current]);
+    openCase(data.case);
+    setCreateOpen(false);
   }
 
   return (
@@ -161,7 +339,7 @@ export function AnalystConsole({ analystName }: { analystName: string }) {
           </div>
         </header>
 
-        {section === "workspace" && (
+        {section === "workspace" && selectedCase && (
           <Workspace
             appealCase={selectedCase}
             result={result}
@@ -171,14 +349,41 @@ export function AnalystConsole({ analystName }: { analystName: string }) {
             runResearch={runResearch}
             loading={loading}
             error={error}
+            history={history}
+            evidenceItems={evidenceItems}
+            onEdit={() => setEditOpen(true)}
+            submitFeedback={submitFeedback}
+            feedbackState={feedbackState}
+            documents={documents}
+            uploadDocument={uploadDocument}
           />
         )}
-        {section === "cases" && <CaseList openCase={openCase} />}
+        {section === "workspace" && !selectedCase && <EmptyPortfolio />}
+        {section === "cases" && (
+          <CaseList
+            cases={cases}
+            openCase={openCase}
+            onAdd={() => setCreateOpen(true)}
+          />
+        )}
         {section === "research" && (
           <ResearchLibrary openWorkspace={() => setSection("workspace")} />
         )}
-        {section === "sources" && <SourceInventory />}
+        {section === "sources" && <SourceInventory dataMode={dataMode} />}
       </div>
+      {editOpen && selectedCase && (
+        <EditCaseDialog
+          appealCase={selectedCase}
+          onClose={() => setEditOpen(false)}
+          onSave={saveCase}
+        />
+      )}
+      {createOpen && (
+        <CreateCaseDialog
+          onClose={() => setCreateOpen(false)}
+          onSave={createCase}
+        />
+      )}
     </div>
   );
 }
@@ -214,6 +419,13 @@ function Workspace({
   runResearch,
   loading,
   error,
+  history,
+  evidenceItems,
+  onEdit,
+  submitFeedback,
+  feedbackState,
+  documents,
+  uploadDocument,
 }: {
   appealCase: AppealCase;
   result: ResearchResult;
@@ -223,6 +435,17 @@ function Workspace({
   runResearch: (question: string) => Promise<void>;
   loading: boolean;
   error: string;
+  history: ResearchHistoryItem[];
+  evidenceItems: EvidenceItem[];
+  onEdit: () => void;
+  submitFeedback: (rating: -1 | 1) => Promise<void>;
+  feedbackState: "idle" | "saving" | "saved";
+  documents: CaseDocument[];
+  uploadDocument: (
+    file: File,
+    title: string,
+    documentType: string,
+  ) => Promise<void>;
 }) {
   const savings = appealCase.assessedValue - appealCase.requestedValue;
   const reduction = Math.round((savings / appealCase.assessedValue) * 100);
@@ -246,6 +469,9 @@ function Workspace({
           <span className={`case-status ${slug(appealCase.status)}`}>
             {appealCase.status}
           </span>
+          <button className="button secondary" onClick={onEdit}>
+            Edit case
+          </button>
           <button className="button secondary" onClick={() => window.print()}>
             Export brief
           </button>
@@ -330,7 +556,12 @@ function Workspace({
             {error && <div className="error-message">{error}</div>}
           </section>
 
-          <ResearchAnswer result={result} loading={loading} />
+          <ResearchAnswer
+            result={result}
+            loading={loading}
+            submitFeedback={submitFeedback}
+            feedbackState={feedbackState}
+          />
           <SimilarCases result={result} />
         </div>
 
@@ -356,16 +587,43 @@ function Workspace({
                 <span className="section-kicker">Before filing</span>
                 <h2>Evidence gaps</h2>
               </div>
-              <span className="count-badge">{result.gaps.length}</span>
+              <span className="count-badge">
+                {evidenceItems.length || result.gaps.length}
+              </span>
             </div>
             <ol className="gap-list">
-              {result.gaps.map((gap, index) => (
-                <li key={gap}>
+              {(evidenceItems.length
+                ? evidenceItems.map((item) => item.label)
+                : result.gaps
+              ).map((gap, index) => (
+                <li key={`${gap}-${index}`}>
                   <span>{index + 1}</span>
                   <p>{gap}</p>
                 </li>
               ))}
             </ol>
+          </section>
+
+          <section className="panel history-card">
+            <span className="section-kicker">Saved work</span>
+            <h2>Research history</h2>
+            {history.length ? (
+              <div className="history-list">
+                {history.slice(0, 4).map((item) => (
+                  <article key={item.id}>
+                    <strong>{item.question}</strong>
+                    <small>
+                      {new Date(item.createdAt).toLocaleDateString()} ·{" "}
+                      {item.confidence}% confidence
+                    </small>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="empty-copy">
+                Live research answers will be saved here automatically.
+              </p>
+            )}
           </section>
 
           <section className="panel source-stack">
@@ -379,6 +637,11 @@ function Workspace({
               to the public FOIA corpus.
             </p>
           </section>
+
+          <DocumentPanel
+            documents={documents}
+            uploadDocument={uploadDocument}
+          />
         </aside>
       </div>
     </main>
@@ -388,9 +651,13 @@ function Workspace({
 function ResearchAnswer({
   result,
   loading,
+  submitFeedback,
+  feedbackState,
 }: {
   result: ResearchResult;
   loading: boolean;
+  submitFeedback: (rating: -1 | 1) => Promise<void>;
+  feedbackState: "idle" | "saving" | "saved";
 }) {
   return (
     <section className={loading ? "panel answer-panel loading" : "panel answer-panel"}>
@@ -446,6 +713,25 @@ function ResearchAnswer({
             Research aid only. Verify the cited record and valuation assumptions
             before using this analysis in a filing.
           </p>
+          <div className="answer-feedback">
+            <span>
+              {feedbackState === "saved"
+                ? "Feedback saved"
+                : "Was this evidence useful?"}
+            </span>
+            <button
+              disabled={feedbackState !== "idle"}
+              onClick={() => void submitFeedback(1)}
+            >
+              Useful
+            </button>
+            <button
+              disabled={feedbackState !== "idle"}
+              onClick={() => void submitFeedback(-1)}
+            >
+              Needs work
+            </button>
+          </div>
         </>
       )}
     </section>
@@ -503,7 +789,15 @@ function SimilarCases({ result }: { result: ResearchResult }) {
   );
 }
 
-function CaseList({ openCase }: { openCase: (item: AppealCase) => void }) {
+function CaseList({
+  cases,
+  openCase,
+  onAdd,
+}: {
+  cases: AppealCase[];
+  openCase: (item: AppealCase) => void;
+  onAdd: () => void;
+}) {
   return (
     <main className="page standard-page">
       <div className="eyebrow">California portfolio</div>
@@ -512,7 +806,9 @@ function CaseList({ openCase }: { openCase: (item: AppealCase) => void }) {
           <h1>Active cases</h1>
           <p>Prioritized by filing deadline and evidence readiness.</p>
         </div>
-        <button className="button primary">Add case</button>
+        <button className="button primary" onClick={onAdd}>
+          Add case
+        </button>
       </div>
       <section className="portfolio-metrics">
         <Metric label="Active cases" value="18" note="Across 7 counties" />
@@ -521,7 +817,7 @@ function CaseList({ openCase }: { openCase: (item: AppealCase) => void }) {
         <Metric label="Ready to file" value="9" note="50% of portfolio" accent />
       </section>
       <section className="panel case-list">
-        {demoCases.map((item) => (
+        {cases.map((item) => (
           <button key={item.id} className="case-row" onClick={() => openCase(item)}>
             <span className="case-row-id">{item.caseNumber}</span>
             <span className="case-row-name">
@@ -544,6 +840,12 @@ function CaseList({ openCase }: { openCase: (item: AppealCase) => void }) {
             <span className="row-arrow">→</span>
           </button>
         ))}
+        {!cases.length && (
+          <div className="empty-list">
+            No active appeals are stored yet. Import or create the first case to
+            begin.
+          </div>
+        )}
       </section>
     </main>
   );
@@ -584,7 +886,7 @@ function ResearchLibrary({ openWorkspace }: { openWorkspace: () => void }) {
   );
 }
 
-function SourceInventory() {
+function SourceInventory({ dataMode }: { dataMode: "demo" | "live" }) {
   const sources = [
     {
       name: "FOIA research corpus",
@@ -602,7 +904,7 @@ function SourceInventory() {
       name: "Active case records",
       system: "Supabase",
       records: "Private analyst data",
-      state: "Configure",
+      state: dataMode === "live" ? "Ready" : "Configure",
     },
     {
       name: "FOIA source files",
@@ -646,6 +948,366 @@ function SourceInventory() {
           </p>
         </div>
         <span className="quality-stat">52K<small>records need classification</small></span>
+      </section>
+    </main>
+  );
+}
+
+function DocumentPanel({
+  documents,
+  uploadDocument,
+}: {
+  documents: CaseDocument[];
+  uploadDocument: (
+    file: File,
+    title: string,
+    documentType: string,
+  ) => Promise<void>;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!file) return;
+    setUploading(true);
+    setError("");
+    try {
+      await uploadDocument(file, file.name, inferUploadType(file.name));
+      setFile(null);
+      event.currentTarget.reset();
+    } catch (uploadError) {
+      setError(
+        uploadError instanceof Error
+          ? uploadError.message
+          : "Document upload failed.",
+      );
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <section className="panel document-card">
+      <span className="section-kicker">Private case files</span>
+      <h2>Documents</h2>
+      <form onSubmit={submit} className="document-upload">
+        <label>
+          <input
+            type="file"
+            accept=".pdf,.docx,.xlsx,.csv,.txt,.jpg,.jpeg,.png"
+            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+          />
+          <span>{file ? file.name : "Choose a case document"}</span>
+        </label>
+        <button className="button primary" disabled={!file || uploading}>
+          {uploading ? "Uploading…" : "Upload"}
+        </button>
+      </form>
+      {error && <p className="document-error">{error}</p>}
+      <div className="document-list">
+        {documents.slice(0, 5).map((document) => (
+          <article key={document.id}>
+            <span>{document.documentType.slice(0, 1).toUpperCase()}</span>
+            <div>
+              <strong>{document.title}</strong>
+              <small>{new Date(document.createdAt).toLocaleDateString()}</small>
+            </div>
+          </article>
+        ))}
+        {!documents.length && (
+          <p>Files uploaded here remain separate from the public FOIA corpus.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function CreateCaseDialog({
+  onClose,
+  onSave,
+}: {
+  onClose: () => void;
+  onSave: (input: {
+    address: string;
+    city: string;
+    county: string;
+    parcel: string;
+    propertyType: string;
+    taxYear: number;
+    assessedValue: number;
+    requestedValue: number;
+    filingDeadline?: string;
+  }) => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const input = {
+      address: String(form.get("address") ?? "").trim(),
+      city: String(form.get("city") ?? "").trim(),
+      county: String(form.get("county") ?? "").trim(),
+      parcel: String(form.get("parcel") ?? "").trim(),
+      propertyType: String(form.get("propertyType") ?? "").trim(),
+      taxYear: Number(form.get("taxYear")),
+      assessedValue: Number(form.get("assessedValue")),
+      requestedValue: Number(form.get("requestedValue")),
+      filingDeadline: String(form.get("filingDeadline") ?? "") || undefined,
+    };
+    if (
+      !input.address ||
+      !input.city ||
+      !input.county ||
+      !input.parcel ||
+      !input.propertyType ||
+      !Number.isFinite(input.assessedValue) ||
+      !Number.isFinite(input.requestedValue)
+    ) {
+      setError("Complete all required case fields.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(input);
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error ? saveError.message : "Case creation failed.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="edit-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-case-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="dialog-heading">
+          <div>
+            <span className="section-kicker">New appeal</span>
+            <h2 id="create-case-title">Create analyst case</h2>
+          </div>
+          <button className="dialog-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <form onSubmit={submit} className="edit-form">
+          <label className="full-field">
+            Property address
+            <input name="address" required maxLength={500} />
+          </label>
+          <label>
+            City
+            <input name="city" required maxLength={200} />
+          </label>
+          <label>
+            County
+            <input name="county" required maxLength={200} />
+          </label>
+          <label>
+            Parcel number
+            <input name="parcel" required maxLength={200} />
+          </label>
+          <label>
+            Property type
+            <select name="propertyType" defaultValue="Office">
+              <option>Office</option>
+              <option>Retail</option>
+              <option>Industrial</option>
+              <option>Multifamily</option>
+              <option>Hospitality</option>
+              <option>Vacant land</option>
+              <option>Other</option>
+            </select>
+          </label>
+          <label>
+            Tax year
+            <input
+              name="taxYear"
+              type="number"
+              min="2000"
+              max="2100"
+              defaultValue={new Date().getFullYear()}
+              required
+            />
+          </label>
+          <label>
+            Filing deadline
+            <input name="filingDeadline" type="date" />
+          </label>
+          <label>
+            Enrolled value
+            <input name="assessedValue" type="number" min="0" required />
+          </label>
+          <label>
+            Requested value
+            <input name="requestedValue" type="number" min="0" required />
+          </label>
+          {error && <div className="error-message full-field">{error}</div>}
+          <div className="dialog-actions full-field">
+            <button type="button" className="button secondary" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="button primary" disabled={saving}>
+              {saving ? "Creating…" : "Create case"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function EditCaseDialog({
+  appealCase,
+  onClose,
+  onSave,
+}: {
+  appealCase: AppealCase;
+  onClose: () => void;
+  onSave: (update: {
+    requestedValue: number;
+    caseTheory: string;
+    confidence: number;
+    status: AppealCase["status"];
+  }) => Promise<void>;
+}) {
+  const [requestedValue, setRequestedValue] = useState(
+    String(appealCase.requestedValue),
+  );
+  const [caseTheory, setCaseTheory] = useState(appealCase.issue);
+  const [confidence, setConfidence] = useState(appealCase.confidence);
+  const [status, setStatus] = useState<AppealCase["status"]>(appealCase.status);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const numericValue = Number(requestedValue);
+    if (!Number.isFinite(numericValue) || numericValue < 0) {
+      setError("Enter a valid requested value.");
+      return;
+    }
+    if (caseTheory.trim().length < 20) {
+      setError("Document a more complete case position before saving.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onSave({
+        requestedValue: numericValue,
+        caseTheory: caseTheory.trim(),
+        confidence,
+        status,
+      });
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error ? saveError.message : "Case update failed.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="edit-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-case-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="dialog-heading">
+          <div>
+            <span className="section-kicker">{appealCase.caseNumber}</span>
+            <h2 id="edit-case-title">Update case position</h2>
+          </div>
+          <button className="dialog-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <form onSubmit={submit} className="edit-form">
+          <label>
+            Workflow status
+            <select
+              value={status}
+              onChange={(event) =>
+                setStatus(event.target.value as AppealCase["status"])
+              }
+            >
+              <option>Researching</option>
+              <option>Evidence review</option>
+              <option>Ready to file</option>
+            </select>
+          </label>
+          <label>
+            Requested value
+            <input
+              type="number"
+              min="0"
+              step="1000"
+              value={requestedValue}
+              onChange={(event) => setRequestedValue(event.target.value)}
+            />
+          </label>
+          <label className="full-field">
+            Case position
+            <textarea
+              rows={6}
+              maxLength={5000}
+              value={caseTheory}
+              onChange={(event) => setCaseTheory(event.target.value)}
+            />
+          </label>
+          <label className="full-field range-field">
+            Analyst readiness
+            <span>{confidence}%</span>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={confidence}
+              onChange={(event) => setConfidence(Number(event.target.value))}
+            />
+          </label>
+          {error && <div className="error-message full-field">{error}</div>}
+          <div className="dialog-actions full-field">
+            <button type="button" className="button secondary" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="button primary" disabled={saving}>
+              {saving ? "Saving…" : "Save case"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function EmptyPortfolio() {
+  return (
+    <main className="page standard-page">
+      <section className="panel empty-portfolio">
+        <span className="section-kicker">Live data connected</span>
+        <h1>No active appeals yet</h1>
+        <p>
+          The connected Supabase project currently contains the case schema but
+          no appeal rows. Import the portal appeal feed or add the first case to
+          begin live research.
+        </p>
       </section>
     </main>
   );
@@ -709,6 +1371,17 @@ function initials(value: string) {
     .join("")
     .slice(0, 2)
     .toUpperCase();
+}
+
+function inferUploadType(fileName: string) {
+  const name = fileName.toLowerCase();
+  if (name.includes("rent")) return "rent_roll";
+  if (name.includes("income") || name.includes("operating")) {
+    return "operating_statement";
+  }
+  if (name.includes("appraisal")) return "appraisal";
+  if (name.includes("photo")) return "property_photos";
+  return "other";
 }
 
 export const previewSimilarCases = demoSimilarCases;

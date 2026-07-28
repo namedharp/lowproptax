@@ -1,10 +1,20 @@
 import { NextResponse } from "next/server";
+import { getRequestAnalyst } from "@/lib/auth";
+import { saveResearchRun } from "@/lib/cases";
 import { researchAppeal } from "@/lib/research";
 import type { AppealCase } from "@/lib/types";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
+  const analyst = getRequestAnalyst(request);
+  if (!analyst) {
+    return NextResponse.json(
+      { error: "Analyst access is required." },
+      { status: 401 },
+    );
+  }
+
   try {
     const body = (await request.json()) as {
       question?: unknown;
@@ -32,6 +42,12 @@ export async function POST(request: Request) {
     const result = await researchAppeal(
       body.question.trim(),
       body.appealCase,
+    );
+    result.runId = await saveResearchRun(
+      body.appealCase.id,
+      body.question.trim(),
+      result,
+      analyst.email,
     );
     return NextResponse.json(result);
   } catch (error) {
