@@ -1,6 +1,6 @@
 {
   "name": "lowproptax-appeal-intelligence",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Evidence-grounded property tax appeal research for LowPropTax analysts.",
   "private": true,
   "engines": {
