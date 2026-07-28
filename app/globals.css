@@ -711,6 +711,25 @@ a.citation:hover {
   padding-top: 12px;
 }
 
+.answer-notes {
+  background: #f5f8f5;
+  border-left: 3px solid var(--amber);
+  color: #5f6e69;
+  font-size: 10px;
+  line-height: 1.5;
+  margin-top: 14px;
+  padding: 12px 14px;
+}
+
+.answer-notes strong {
+  color: var(--navy);
+}
+
+.answer-notes ul {
+  margin: 7px 0 0;
+  padding-left: 18px;
+}
+
 .answer-feedback {
   align-items: center;
   border-top: 1px solid var(--line);
@@ -1195,6 +1214,43 @@ td small {
   max-width: 850px;
 }
 
+.library-search-form {
+  margin-top: 18px;
+}
+
+.library-search-form > input {
+  background: rgba(255, 255, 255, 0.98);
+  border: 0;
+  color: var(--navy);
+  font-size: 16px;
+  padding: 15px 17px;
+  width: 100%;
+}
+
+.library-filters {
+  display: grid;
+  gap: 9px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 10px 0;
+}
+
+.library-filters input,
+.library-filters select,
+.admin-form input,
+.admin-form select {
+  background: #fff;
+  border: 1px solid var(--line);
+  color: var(--navy);
+  min-width: 0;
+  padding: 10px 11px;
+}
+
+.library-search-form .question-actions {
+  border-top: 0;
+  justify-content: flex-start;
+  padding-top: 4px;
+}
+
 .library-grid {
   display: grid;
   gap: 18px;
@@ -1308,6 +1364,30 @@ td small {
   font-size: 42px;
   min-width: 140px;
   text-align: right;
+}
+
+.admin-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 18px 0;
+}
+
+.admin-grid .panel {
+  padding: 22px;
+}
+
+.admin-grid h2 {
+  color: var(--navy);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 21px;
+  font-weight: 500;
+  margin: 8px 0 18px;
+}
+
+.admin-form {
+  display: grid;
+  gap: 9px;
 }
 
 .quality-stat small {
@@ -1531,8 +1611,13 @@ td small {
 
   .workspace-aside,
   .citation-grid,
-  .library-grid {
+  .library-grid,
+  .admin-grid {
     grid-template-columns: 1fr;
+  }
+
+  .library-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .case-facts {

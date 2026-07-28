@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { getRequestAnalyst } from "@/lib/auth";
+import { authorizeRequest } from "@/lib/auth";
 import { listResearchHistory } from "@/lib/cases";
 
 export async function GET(request: Request) {
-  if (!getRequestAnalyst(request)) {
+  if (!(await authorizeRequest(request))) {
     return NextResponse.json({ error: "Analyst access is required." }, { status: 401 });
   }
   const appealId = new URL(request.url).searchParams.get("appealId");

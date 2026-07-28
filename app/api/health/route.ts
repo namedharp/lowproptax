@@ -3,28 +3,32 @@ import { analystAccessIsConfigured } from "@/lib/auth";
 import { liveCaseDataIsConfigured } from "@/lib/cases";
 import { getLlmConfiguration, llmIsConfigured } from "@/lib/llm-config";
 import {
-  embeddingIsConfigured,
   liveResearchIsConfigured,
 } from "@/lib/research";
+import { getQdrantHealth, qdrantIsConfigured } from "@/lib/qdrant";
+import { millageIsConfigured } from "@/lib/sync/millage";
 
-export function GET() {
+export async function GET() {
   const llm = getLlmConfiguration();
+  const qdrant = await getQdrantHealth();
 
   return NextResponse.json({
     status: "ok",
     mode: liveResearchIsConfigured() ? "live" : "demo",
     integrations: {
-      qdrant: Boolean(process.env.QDRANT_URL && process.env.QDRANT_API_KEY),
+      qdrant: qdrantIsConfigured(),
+      qdrantCollections: qdrant.collections,
       llm: llmIsConfigured(),
       llmProvider: llm.provider,
       llmModel: llm.model,
-      embeddings: embeddingIsConfigured(),
+      qdrantCloudInference: qdrantIsConfigured(),
       supabase: Boolean(
         process.env.NEXT_PUBLIC_SUPABASE_URL &&
           process.env.SUPABASE_SECRET_KEY,
       ),
       caseData: liveCaseDataIsConfigured(),
       analystAccess: analystAccessIsConfigured(),
+      millage: millageIsConfigured(),
     },
   });
 }

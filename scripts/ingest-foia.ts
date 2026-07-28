@@ -25,6 +25,11 @@ for (const source of documents) {
       `Refusing to index private source "${document.title}" into the public FOIA collection.`,
     );
   }
+  if (document.county !== "Sacramento") {
+    throw new Error(
+      `Refusing to index non-Sacramento source "${document.title}" during the pilot.`,
+    );
+  }
   const chunks = await chunkFoiaDocument(document);
   prepared.push({ document, chunks });
 }
@@ -55,28 +60,39 @@ if (dryRun) {
 requireEnvironment([
   "QDRANT_URL",
   "QDRANT_API_KEY",
-  "EMBEDDING_API_KEY",
 ]);
 
 let indexedPoints = 0;
 for (const { document, chunks } of prepared) {
-  const embeddings = await createEmbeddings(chunks.map((chunk) => chunk.text));
-  const points = chunks.map((chunk, index) => ({
+  const points = chunks.map((chunk) => ({
     id: chunk.id,
-    vector: embeddings[index],
+    vector: {
+      dense: {
+        text: chunk.text,
+        model:
+          process.env.QDRANT_DENSE_MODEL ??
+          "sentence-transformers/all-minilm-l6-v2",
+      },
+      bm25: {
+        text: chunk.text,
+        model: process.env.QDRANT_BM25_MODEL ?? "qdrant/bm25",
+      },
+    },
     payload: {
+      ...document.metadata,
       text: chunk.text,
       title: document.title,
-      county: document.county,
-      doc_type: document.documentType,
+      county: "Sacramento",
+      county_slug: "sacramento",
+      document_type: document.documentType,
       source_url: document.sourceUrl,
-      source_id: document.sourceId,
+      document_id: document.sourceId,
       content_hash: document.contentHash,
       visibility: document.visibility,
+      source_type: "public",
       chunk_index: chunk.index,
       chunk_total: chunk.total,
       source_modified_at: document.modifiedAt,
-      ...document.metadata,
     },
   }));
   await upsertQdrant(points);
@@ -89,7 +105,8 @@ process.stdout.write(
       mode: "indexed",
       documents: prepared.length,
       points: indexedPoints,
-      collection: process.env.QDRANT_RESEARCH_COLLECTION ?? "lpt_research",
+      collection:
+        process.env.QDRANT_RESEARCH_COLLECTION ?? "lpt_research_live",
     },
     null,
     2,
@@ -106,51 +123,19 @@ async function readManifest(path: string): Promise<FoiaSourceDocument[]> {
   return documents;
 }
 
-async function createEmbeddings(inputs: string[]): Promise<number[][]> {
-  const all: number[][] = [];
-  for (let offset = 0; offset < inputs.length; offset += 32) {
-    const batch = inputs.slice(offset, offset + 32);
-    const baseUrl = (
-      process.env.EMBEDDING_API_BASE_URL ?? "https://api.openai.com/v1"
-    ).replace(/\/+$/, "");
-    const response = await fetch(`${baseUrl}/embeddings`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${process.env.EMBEDDING_API_KEY}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: process.env.EMBEDDING_MODEL ?? "text-embedding-3-small",
-        input: batch,
-      }),
-    });
-    if (!response.ok) {
-      throw new Error(`Embedding batch failed (${response.status}).`);
-    }
-    const data = (await response.json()) as {
-      data?: Array<{ index: number; embedding: number[] }>;
-    };
-    const ordered = (data.data ?? [])
-      .sort((left, right) => left.index - right.index)
-      .map((item) => item.embedding);
-    if (ordered.length !== batch.length) {
-      throw new Error("Embedding provider returned an incomplete batch.");
-    }
-    all.push(...ordered);
-  }
-  return all;
-}
-
 async function upsertQdrant(
   points: Array<{
     id: string;
-    vector: number[];
+    vector: {
+      dense: { text: string; model: string };
+      bm25: { text: string; model: string };
+    };
     payload: Record<string, unknown>;
   }>,
 ): Promise<void> {
   const baseUrl = process.env.QDRANT_URL!.replace(/\/+$/, "");
   const collection =
-    process.env.QDRANT_RESEARCH_COLLECTION ?? "lpt_research";
+    process.env.QDRANT_RESEARCH_COLLECTION ?? "lpt_research_live";
   const response = await fetch(
     `${baseUrl}/collections/${encodeURIComponent(collection)}/points?wait=true`,
     {

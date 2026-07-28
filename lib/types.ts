@@ -9,6 +9,8 @@ export type AppealCase = {
   taxYear: string;
   status: "Researching" | "Evidence review" | "Ready to file";
   analyst: string;
+  assignedAnalystEmail?: string | null;
+  canEdit?: boolean;
   assessedValue: number;
   requestedValue: number;
   deadline: string;
@@ -36,6 +38,11 @@ export type EvidenceCitation = {
   documentType: string;
   excerpt: string;
   sourceUrl?: string;
+  sourceType: "public" | "prior_appeal" | "private_case";
+  documentId?: string;
+  pageStart?: number;
+  pageEnd?: number;
+  sourceNumber?: number;
 };
 
 export type ResearchResult = {
@@ -45,8 +52,60 @@ export type ResearchResult = {
   similarCases: SimilarCase[];
   citations: EvidenceCitation[];
   gaps: string[];
+  limitations: string[];
+  inferences: string[];
   generatedAt: string;
   runId?: string;
+  telemetry?: {
+    durationMs: number;
+    provider: string;
+    model: string;
+    retrievedPointIds: string[];
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+  };
+};
+
+export type ResearchLibraryFilters = {
+  query: string;
+  taxYear?: string;
+  propertyType?: string;
+  documentType?: string;
+  outcome?: string;
+};
+
+export type ResearchLibraryItem = EvidenceCitation & {
+  score: number;
+  taxYear?: string;
+  propertyType?: string;
+  outcome?: string;
+};
+
+export type SourceHealth = {
+  id: "sacramento_lambda" | "sacramento_drive" | "millage" | "qdrant";
+  label: string;
+  status: "healthy" | "degraded" | "waiting" | "unconfigured";
+  detail: string;
+  recordCount?: number;
+  lastSyncedAt?: string;
+};
+
+export type AdminOverview = {
+  analysts: Array<{
+    email: string;
+    displayName: string;
+    role: "admin" | "analyst";
+    active: boolean;
+  }>;
+  sources: SourceHealth[];
+  failedOcrJobs: number;
+  collections: Array<{
+    alias: string;
+    target?: string;
+    status: "ready" | "missing" | "unconfigured";
+    pointCount?: number;
+  }>;
 };
 
 export type ResearchHistoryItem = {

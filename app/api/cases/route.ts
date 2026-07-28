@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getRequestAnalyst } from "@/lib/auth";
+import { authorizeRequest } from "@/lib/auth";
 import {
   createAppealCase,
   listAppealCases,
@@ -8,12 +8,13 @@ import {
 } from "@/lib/cases";
 
 export async function GET(request: Request) {
-  if (!getRequestAnalyst(request)) {
+  const analyst = await authorizeRequest(request);
+  if (!analyst) {
     return NextResponse.json({ error: "Analyst access is required." }, { status: 401 });
   }
 
   try {
-    const cases = await listAppealCases();
+    const cases = await listAppealCases(analyst);
     return NextResponse.json({
       cases,
       mode: liveCaseDataIsConfigured() ? "live" : "demo",
@@ -28,7 +29,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!getRequestAnalyst(request)) {
+  const analyst = await authorizeRequest(request);
+  if (!analyst) {
     return NextResponse.json({ error: "Analyst access is required." }, { status: 401 });
   }
   try {
@@ -39,7 +41,7 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    return NextResponse.json({ case: await createAppealCase(input) });
+    return NextResponse.json({ case: await createAppealCase(input, analyst.email) });
   } catch (error) {
     console.error("Case creation failed", error);
     return NextResponse.json(
@@ -76,6 +78,7 @@ function validateNewCase(body: Record<string, unknown>): NewAppealCase | null {
     !county ||
     !parcel ||
     !propertyType ||
+    county.toLowerCase().replace(/\s+county$/, "") !== "sacramento" ||
     taxYear === null ||
     assessedValue === null ||
     requestedValue === null ||

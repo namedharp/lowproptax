@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { getRequestAnalyst } from "@/lib/auth";
+import { authorizeRequest } from "@/lib/auth";
 import { saveResearchFeedback } from "@/lib/cases";
 
 export async function POST(request: Request) {
-  const analyst = getRequestAnalyst(request);
+  const analyst = await authorizeRequest(request);
   if (!analyst) {
     return NextResponse.json({ error: "Analyst access is required." }, { status: 401 });
   }

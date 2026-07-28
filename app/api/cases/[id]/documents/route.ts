@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
-import { getRequestAnalyst } from "@/lib/auth";
+import { authorizeRequest } from "@/lib/auth";
+import { canEditAppeal } from "@/lib/cases";
 import { listCaseDocuments, uploadCaseDocument } from "@/lib/documents";
 
 export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  if (!getRequestAnalyst(request)) {
+  if (!(await authorizeRequest(request))) {
     return NextResponse.json({ error: "Analyst access is required." }, { status: 401 });
   }
   try {
@@ -25,11 +26,18 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  if (!getRequestAnalyst(request)) {
+  const analyst = await authorizeRequest(request);
+  if (!analyst) {
     return NextResponse.json({ error: "Analyst access is required." }, { status: 401 });
   }
   try {
     const { id } = await context.params;
+    if (!(await canEditAppeal(id, analyst))) {
+      return NextResponse.json(
+        { error: "This case is assigned to another analyst." },
+        { status: 403 },
+      );
+    }
     const form = await request.formData();
     const file = form.get("file");
     const documentType = String(form.get("documentType") ?? "other")
@@ -44,7 +52,13 @@ export async function POST(
         { status: 400 },
       );
     }
-    const document = await uploadCaseDocument(id, file, documentType, title);
+    const document = await uploadCaseDocument(
+      id,
+      file,
+      documentType,
+      title,
+      analyst.email,
+    );
     return NextResponse.json({ document });
   } catch (error) {
     console.error("Document upload failed", error);

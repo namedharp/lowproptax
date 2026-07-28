@@ -1,17 +1,24 @@
 import { NextResponse } from "next/server";
-import { getRequestAnalyst } from "@/lib/auth";
-import { updateAppealCase } from "@/lib/cases";
+import { authorizeRequest } from "@/lib/auth";
+import { canEditAppeal, updateAppealCase } from "@/lib/cases";
 
 export async function PATCH(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  if (!getRequestAnalyst(request)) {
+  const analyst = await authorizeRequest(request);
+  if (!analyst) {
     return NextResponse.json({ error: "Analyst access is required." }, { status: 401 });
   }
 
   try {
     const { id } = await context.params;
+    if (!(await canEditAppeal(id, analyst))) {
+      return NextResponse.json(
+        { error: "This case is assigned to another analyst." },
+        { status: 403 },
+      );
+    }
     const body = (await request.json()) as Record<string, unknown>;
     const update = validateUpdate(body);
     if (!update) {
@@ -20,7 +27,7 @@ export async function PATCH(
         { status: 400 },
       );
     }
-    await updateAppealCase(id, update);
+    await updateAppealCase(id, update, analyst.email);
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("Case update failed", error);

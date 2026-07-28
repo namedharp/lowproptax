@@ -44,6 +44,7 @@ export async function uploadCaseDocument(
   file: File,
   documentType: string,
   title: string,
+  analystEmail?: string,
 ): Promise<CaseDocument | undefined> {
   if (!liveCaseDataIsConfigured()) return undefined;
   assertUuid(appealId);
@@ -59,9 +60,11 @@ export async function uploadCaseDocument(
     .slice(-150);
   const storagePath = `${appealId}/${crypto.randomUUID()}-${safeName}`;
   const supabase = getSupabaseServerClient();
+  const fileBytes = await file.arrayBuffer();
+  const contentHash = await sha256(fileBytes);
   const { error: uploadError } = await supabase.storage
     .from("case-documents")
-    .upload(storagePath, await file.arrayBuffer(), {
+    .upload(storagePath, fileBytes, {
       contentType: file.type,
       upsert: false,
     });
@@ -87,6 +90,31 @@ export async function uploadCaseDocument(
     await supabase.storage.from("case-documents").remove([storagePath]);
     throw new Error(`Document metadata failed: ${error.message}`);
   }
+  const { error: queueError } = await supabase
+    .from("case_document_vectors")
+    .insert({
+      appeal_id: appealId,
+      document_id: data.id,
+      qdrant_collection:
+        process.env.QDRANT_PRIVATE_COLLECTION ?? "case_private_live",
+      content_hash: contentHash,
+      status: "queued",
+    });
+  if (queueError) {
+    throw new Error(`Document indexing could not be queued: ${queueError.message}`);
+  }
+  await supabase.from("appeal_audit_events").insert({
+    appeal_id: appealId,
+    actor_email: analystEmail ?? null,
+    action: "case_document.uploaded",
+    entity_type: "appeal_document",
+    entity_id: data.id,
+    after_state: {
+      document_type: documentType,
+      title,
+      content_hash: contentHash,
+    },
+  });
   return {
     id: data.id as string,
     appealId: data.appeal_id as string,
@@ -95,6 +123,13 @@ export async function uploadCaseDocument(
     fileName: file.name,
     createdAt: data.created_at as string,
   };
+}
+
+async function sha256(value: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", value);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function assertUuid(value: string) {

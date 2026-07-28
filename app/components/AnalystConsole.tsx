@@ -4,18 +4,24 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   createDemoResearch,
   demoCases,
-  demoCitations,
   demoSimilarCases,
 } from "@/lib/demo-data";
 import type {
+  AdminOverview,
   AppealCase,
   CaseDocument,
   EvidenceItem,
   ResearchHistoryItem,
   ResearchResult,
+  SourceHealth,
 } from "@/lib/types";
+import {
+  AdminWorkspace,
+  PilotResearchLibrary,
+  PilotSourceInventory,
+} from "./PilotPanels";
 
-type Section = "workspace" | "cases" | "research" | "sources";
+type Section = "workspace" | "cases" | "research" | "sources" | "admin";
 
 const quickQuestions = [
   "Which evidence most often changes the result in similar office appeals?",
@@ -27,10 +33,12 @@ export function AnalystConsole({
   analystName,
   initialCases,
   dataMode,
+  analystRole,
 }: {
   analystName: string;
   initialCases: AppealCase[];
   dataMode: "demo" | "live";
+  analystRole: "admin" | "analyst";
 }) {
   const [section, setSection] = useState<Section>("workspace");
   const [cases, setCases] = useState(
@@ -62,6 +70,29 @@ export function AnalystConsole({
   const [feedbackState, setFeedbackState] = useState<"idle" | "saving" | "saved">(
     "idle",
   );
+  const [sourceHealth, setSourceHealth] = useState<SourceHealth[]>([]);
+  const [adminOverview, setAdminOverview] = useState<AdminOverview | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/sources", { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const data = (await response.json()) as { sources?: SourceHealth[] };
+        setSourceHealth(data.sources ?? []);
+      })
+      .catch(() => undefined);
+    if (analystRole === "admin") {
+      void fetch("/api/admin/overview", { signal: controller.signal })
+        .then(async (response) => {
+          if (response.ok) {
+            setAdminOverview((await response.json()) as AdminOverview);
+          }
+        })
+        .catch(() => undefined);
+    }
+    return () => controller.abort();
+  }, [analystRole]);
 
   useEffect(() => {
     if (!selectedCase || dataMode !== "live") {
@@ -121,7 +152,7 @@ export function AnalystConsole({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           question: cleanQuestion,
-          appealCase: selectedCase,
+          appealId: selectedCase.id,
         }),
       });
       const data = (await response.json()) as ResearchResult & {
@@ -286,7 +317,7 @@ export function AnalystConsole({
             marker="02"
             active={section === "cases"}
             onClick={() => setSection("cases")}
-            count="18"
+            count={String(cases.length)}
           />
           <NavButton
             label="Research library"
@@ -300,21 +331,29 @@ export function AnalystConsole({
             active={section === "sources"}
             onClick={() => setSection("sources")}
           />
+          {analystRole === "admin" && (
+            <NavButton
+              label="Administration"
+              marker="05"
+              active={section === "admin"}
+              onClick={() => setSection("admin")}
+            />
+          )}
         </nav>
 
         <div className="sidebar-spacer" />
         <div className="corpus-card">
           <span className="status-dot" />
           <div>
-            <strong>Research corpus ready</strong>
-            <small>72,092 indexed records</small>
+            <strong>Sacramento research pilot</strong>
+            <small>{corpusSummary(sourceHealth)}</small>
           </div>
         </div>
         <div className="analyst-card">
           <span className="avatar">{initials(analystName)}</span>
           <div>
             <strong>{analystName}</strong>
-            <small>LPT analyst · California</small>
+            <small>LPT {analystRole} · Sacramento</small>
           </div>
         </div>
       </aside>
@@ -356,6 +395,7 @@ export function AnalystConsole({
             feedbackState={feedbackState}
             documents={documents}
             uploadDocument={uploadDocument}
+            sourceHealth={sourceHealth}
           />
         )}
         {section === "workspace" && !selectedCase && <EmptyPortfolio />}
@@ -367,9 +407,31 @@ export function AnalystConsole({
           />
         )}
         {section === "research" && (
-          <ResearchLibrary openWorkspace={() => setSection("workspace")} />
+          <PilotResearchLibrary openWorkspace={() => setSection("workspace")} />
         )}
-        {section === "sources" && <SourceInventory dataMode={dataMode} />}
+        {section === "sources" && (
+          <PilotSourceInventory dataMode={dataMode} sources={sourceHealth} />
+        )}
+        {section === "admin" && analystRole === "admin" && (
+          <AdminWorkspace
+            overview={adminOverview}
+            cases={cases}
+            onRefresh={setAdminOverview}
+            onCaseAssigned={(appealId, email) =>
+              setCases((current) =>
+                current.map((item) =>
+                  item.id === appealId
+                    ? {
+                        ...item,
+                        analyst: email,
+                        assignedAnalystEmail: email,
+                      }
+                    : item,
+                ),
+              )
+            }
+          />
+        )}
       </div>
       {editOpen && selectedCase && (
         <EditCaseDialog
@@ -426,6 +488,7 @@ function Workspace({
   feedbackState,
   documents,
   uploadDocument,
+  sourceHealth,
 }: {
   appealCase: AppealCase;
   result: ResearchResult;
@@ -446,6 +509,7 @@ function Workspace({
     title: string,
     documentType: string,
   ) => Promise<void>;
+  sourceHealth: SourceHealth[];
 }) {
   const savings = appealCase.assessedValue - appealCase.requestedValue;
   const reduction = Math.round((savings / appealCase.assessedValue) * 100);
@@ -469,9 +533,11 @@ function Workspace({
           <span className={`case-status ${slug(appealCase.status)}`}>
             {appealCase.status}
           </span>
-          <button className="button secondary" onClick={onEdit}>
-            Edit case
-          </button>
+          {appealCase.canEdit !== false && (
+            <button className="button secondary" onClick={onEdit}>
+              Edit case
+            </button>
+          )}
           <button className="button secondary" onClick={() => window.print()}>
             Export brief
           </button>
@@ -490,7 +556,7 @@ function Workspace({
         <Metric
           label="Filing deadline"
           value={appealCase.deadline}
-          note="21 days remaining"
+          note={deadlineNote(appealCase.deadline)}
         />
       </section>
 
@@ -576,8 +642,9 @@ function Workspace({
               <span style={{ width: `${result.confidence}%` }} />
             </div>
             <p>
-              Strong comparable pattern. Resolve the missing records before
-              finalizing the filing position.
+              {result.confidence >= 75
+                ? "Retrieval coverage is strong. Resolve the remaining evidence gaps before finalizing the filing position."
+                : "Retrieval coverage is limited. Broaden the evidence set before relying on this answer."}
             </p>
           </section>
 
@@ -629,9 +696,37 @@ function Workspace({
           <section className="panel source-stack">
             <span className="section-kicker">Search scope</span>
             <h2>Sources used</h2>
-            <SourceStat label="Public-record passages" value="69,602" />
-            <SourceStat label="Prior appeal outcomes" value="2,490" />
+            <SourceStat
+              label="Public-record citations"
+              value={String(
+                result.citations.filter((item) => item.sourceType === "public")
+                  .length,
+              )}
+            />
+            <SourceStat
+              label="Prior-appeal citations"
+              value={String(
+                result.citations.filter(
+                  (item) => item.sourceType === "prior_appeal",
+                ).length,
+              )}
+            />
+            <SourceStat
+              label="Private-case excerpts"
+              value={String(
+                result.citations.filter(
+                  (item) => item.sourceType === "private_case",
+                ).length,
+              )}
+            />
             <SourceStat label="County" value={appealCase.county} />
+            <SourceStat
+              label="Index state"
+              value={
+                sourceHealth.find((item) => item.id === "qdrant")?.status ??
+                "checking"
+              }
+            />
             <p className="privacy-note">
               Private case facts are used for this search. They are never added
               to the public FOIA corpus.
@@ -641,6 +736,7 @@ function Workspace({
           <DocumentPanel
             documents={documents}
             uploadDocument={uploadDocument}
+            canEdit={appealCase.canEdit !== false}
           />
         </aside>
       </div>
@@ -680,13 +776,32 @@ function ResearchAnswer({
       ) : (
         <>
           <p className="answer-copy">{result.answer}</p>
+          {result.inferences.length > 0 && (
+            <div className="answer-notes">
+              <strong>Clearly marked inference</strong>
+              <ul>
+                {result.inferences.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div className="citation-grid">
             {result.citations.map((citation, index) => {
               const content = (
                 <>
                   <div className="citation-meta">
-                    <span>[{index + 1}]</span>
-                    {citation.county} · {citation.documentType}
+                    <span>[{citation.sourceNumber ?? index + 1}]</span>
+                    {citation.county} · {citation.documentType} ·{" "}
+                    {sourceTypeLabel(citation.sourceType)}
+                    {citation.pageStart
+                      ? ` · p. ${citation.pageStart}${
+                          citation.pageEnd &&
+                          citation.pageEnd !== citation.pageStart
+                            ? `–${citation.pageEnd}`
+                            : ""
+                        }`
+                      : ""}
                   </div>
                   <strong>{citation.title}</strong>
                   <p>{citation.excerpt}</p>
@@ -709,6 +824,16 @@ function ResearchAnswer({
               );
             })}
           </div>
+          {result.limitations.length > 0 && (
+            <div className="answer-notes">
+              <strong>Limitations</strong>
+              <ul>
+                {result.limitations.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           <p className="answer-disclaimer">
             Research aid only. Verify the cited record and valuation assumptions
             before using this analysis in a filing.
@@ -798,9 +923,19 @@ function CaseList({
   openCase: (item: AppealCase) => void;
   onAdd: () => void;
 }) {
+  const dueSoon = cases.filter((item) => {
+    const days = daysUntil(item.deadline);
+    return days >= 0 && days <= 30;
+  }).length;
+  const valueAtIssue = cases.reduce(
+    (total, item) =>
+      total + Math.max(0, item.assessedValue - item.requestedValue),
+    0,
+  );
+  const ready = cases.filter((item) => item.status === "Ready to file").length;
   return (
     <main className="page standard-page">
-      <div className="eyebrow">California portfolio</div>
+      <div className="eyebrow">Sacramento County portfolio</div>
       <div className="page-heading">
         <div>
           <h1>Active cases</h1>
@@ -811,10 +946,23 @@ function CaseList({
         </button>
       </div>
       <section className="portfolio-metrics">
-        <Metric label="Active cases" value="18" note="Across 7 counties" />
-        <Metric label="Due in 30 days" value="6" note="2 need evidence" />
-        <Metric label="Value at issue" value="$38.4M" />
-        <Metric label="Ready to file" value="9" note="50% of portfolio" accent />
+        <Metric
+          label="Active cases"
+          value={String(cases.length)}
+          note="Sacramento County only"
+        />
+        <Metric label="Due in 30 days" value={String(dueSoon)} />
+        <Metric label="Value at issue" value={money(valueAtIssue)} />
+        <Metric
+          label="Ready to file"
+          value={String(ready)}
+          note={
+            cases.length
+              ? `${Math.round((ready / cases.length) * 100)}% of portfolio`
+              : "No cases loaded"
+          }
+          accent
+        />
       </section>
       <section className="panel case-list">
         {cases.map((item) => (
@@ -851,111 +999,10 @@ function CaseList({
   );
 }
 
-function ResearchLibrary({ openWorkspace }: { openWorkspace: () => void }) {
-  return (
-    <main className="page standard-page">
-      <div className="eyebrow">Public-record intelligence</div>
-      <div className="page-heading">
-        <div>
-          <h1>Research library</h1>
-          <p>
-            Search findings, decisions, guidance, and prior outcomes without a
-            case attached.
-          </p>
-        </div>
-      </div>
-      <section className="library-hero">
-        <span>Search 72,092 indexed records</span>
-        <h2>What have California boards accepted as proof of economic obsolescence?</h2>
-        <button className="button primary" onClick={openWorkspace}>
-          Start case-grounded research
-        </button>
-      </section>
-      <div className="library-grid">
-        {demoCitations.map((citation) => (
-          <article className="panel library-card" key={citation.id}>
-            <span className="section-kicker">
-              {citation.county} · {citation.documentType}
-            </span>
-            <h3>{citation.title}</h3>
-            <p>{citation.excerpt}</p>
-          </article>
-        ))}
-      </div>
-    </main>
-  );
-}
-
-function SourceInventory({ dataMode }: { dataMode: "demo" | "live" }) {
-  const sources = [
-    {
-      name: "FOIA research corpus",
-      system: "Qdrant · lpt_research",
-      records: "69,602 passages",
-      state: "Ready",
-    },
-    {
-      name: "Prior appeal outcomes",
-      system: "Qdrant · appeal_comps",
-      records: "2,490 appeals",
-      state: "Ready",
-    },
-    {
-      name: "Active case records",
-      system: "Supabase",
-      records: "Private analyst data",
-      state: dataMode === "live" ? "Ready" : "Configure",
-    },
-    {
-      name: "FOIA source files",
-      system: "Google Drive",
-      records: "County-organized archive",
-      state: "Connector",
-    },
-  ];
-  return (
-    <main className="page standard-page">
-      <div className="eyebrow">System stewardship</div>
-      <div className="page-heading">
-        <div>
-          <h1>Data sources</h1>
-          <p>One view of the evidence systems behind analyst answers.</p>
-        </div>
-      </div>
-      <section className="panel source-table">
-        {sources.map((source) => (
-          <div className="source-row" key={source.name}>
-            <span className="source-icon">{source.name.slice(0, 1)}</span>
-            <span>
-              <strong>{source.name}</strong>
-              <small>{source.system}</small>
-            </span>
-            <span>{source.records}</span>
-            <span className={source.state === "Ready" ? "source-ready" : "source-next"}>
-              {source.state}
-            </span>
-          </div>
-        ))}
-      </section>
-      <section className="quality-banner">
-        <div>
-          <span className="section-kicker">Data quality checkpoint</span>
-          <h2>Normalize county names and document types before automation.</h2>
-          <p>
-            The current research corpus contains inconsistent county labels and
-            many records without a document type. Answers remain citation-first
-            while that cleanup is completed.
-          </p>
-        </div>
-        <span className="quality-stat">52K<small>records need classification</small></span>
-      </section>
-    </main>
-  );
-}
-
 function DocumentPanel({
   documents,
   uploadDocument,
+  canEdit,
 }: {
   documents: CaseDocument[];
   uploadDocument: (
@@ -963,6 +1010,7 @@ function DocumentPanel({
     title: string,
     documentType: string,
   ) => Promise<void>;
+  canEdit: boolean;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -1001,10 +1049,18 @@ function DocumentPanel({
           />
           <span>{file ? file.name : "Choose a case document"}</span>
         </label>
-        <button className="button primary" disabled={!file || uploading}>
-          {uploading ? "Uploading…" : "Upload"}
+        <button
+          className="button primary"
+          disabled={!canEdit || !file || uploading}
+        >
+          {uploading ? "Uploading…" : canEdit ? "Upload" : "Assigned analyst only"}
         </button>
       </form>
+      {!canEdit && (
+        <p className="empty-copy">
+          Only the assigned analyst or an administrator can add files.
+        </p>
+      )}
       {error && <p className="document-error">{error}</p>}
       <div className="document-list">
         {documents.slice(0, 5).map((document) => (
@@ -1112,7 +1168,7 @@ function CreateCaseDialog({
           </label>
           <label>
             County
-            <input name="county" required maxLength={200} />
+            <input name="county" value="Sacramento" readOnly />
           </label>
           <label>
             Parcel number
@@ -1349,6 +1405,38 @@ function SourceStat({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function corpusSummary(sources: SourceHealth[]): string {
+  const qdrant = sources.find((item) => item.id === "qdrant");
+  if (!qdrant) return "Checking live index health";
+  if (qdrant.recordCount !== undefined) {
+    return `${qdrant.recordCount.toLocaleString()} indexed records`;
+  }
+  return qdrant.detail;
+}
+
+function deadlineNote(value: string): string {
+  const days = daysUntil(value);
+  if (!Number.isFinite(days)) return "Deadline not scheduled";
+  if (days < 0) return `${Math.abs(days)} days overdue`;
+  if (days === 0) return "Due today";
+  return `${days} days remaining`;
+}
+
+function daysUntil(value: string): number {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return Number.POSITIVE_INFINITY;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  date.setHours(0, 0, 0, 0);
+  return Math.ceil((date.getTime() - today.getTime()) / 86_400_000);
+}
+
+function sourceTypeLabel(value: string): string {
+  if (value === "prior_appeal") return "prior appeal";
+  if (value === "private_case") return "private case";
+  return "public record";
 }
 
 function money(value: number) {

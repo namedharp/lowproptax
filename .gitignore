@@ -43,3 +43,7 @@ next-env.d.ts
 /outputs/
 /work/
 /.sites-init/
+
+# python worker
+__pycache__/
+*.py[cod]

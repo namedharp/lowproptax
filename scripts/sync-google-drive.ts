@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { GoogleAuth } from "google-auth-library";
+import { createClient } from "@supabase/supabase-js";
 import type { FoiaSourceDocument } from "../lib/ingestion/types";
 
 type DriveFile = {
@@ -19,6 +20,7 @@ const GOOGLE_SHEET = "application/vnd.google-apps.spreadsheet";
 const GOOGLE_SLIDE = "application/vnd.google-apps.presentation";
 const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
 if (!folderId) throw new Error("GOOGLE_DRIVE_FOLDER_ID is required.");
+const syncStartedAt = new Date().toISOString();
 
 const outArgument = process.argv
   .slice(2)
@@ -30,16 +32,27 @@ const outputPath = resolve(
 const authHeader = await createAuthorizationHeader();
 const files = await walkFolder(folderId);
 const documents: FoiaSourceDocument[] = [];
-const skipped: Array<{ id: string; name: string; reason: string }> = [];
+const skipped: Array<{
+  id: string;
+  name: string;
+  reason: string;
+  sourceUrl?: string;
+  modifiedAt?: string;
+  localPath?: string;
+}> = [];
 
 for (const file of files) {
   try {
     const text = await extractFileText(file);
     if (!text.trim()) {
+      const localPath = await saveOcrCandidate(file);
       skipped.push({
         id: file.id,
         name: file.name,
         reason: "No extractable text; OCR or a format-specific extractor is required.",
+        sourceUrl: file.webViewLink,
+        modifiedAt: file.modifiedTime,
+        localPath,
       });
       continue;
     }
@@ -49,8 +62,10 @@ for (const file of files) {
       text,
       sourceUrl: file.webViewLink,
       modifiedAt: file.modifiedTime,
+      county: "Sacramento",
       visibility: "public_foia",
       metadata: {
+        county_slug: "sacramento",
         drive_file_id: file.id,
         drive_mime_type: file.mimeType,
         drive_md5: file.md5Checksum,
@@ -63,6 +78,18 @@ for (const file of files) {
       reason: error instanceof Error ? error.message : "Extraction failed.",
     });
   }
+}
+
+async function saveOcrCandidate(file: DriveFile): Promise<string | undefined> {
+  if (file.mimeType !== "application/pdf") return undefined;
+  const bytes = await download(
+    `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`,
+  );
+  const safeId = file.id.replace(/[^a-zA-Z0-9_-]/g, "");
+  const path = resolve(dirname(outputPath), "ocr", `${safeId}.pdf`);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, bytes);
+  return path;
 }
 
 await mkdir(dirname(outputPath), { recursive: true });
@@ -80,6 +107,7 @@ await writeFile(
   )}\n`,
   "utf8",
 );
+await recordDriveSynchronization(files.length, documents.length, skipped.length);
 
 process.stdout.write(
   `${JSON.stringify(
@@ -207,8 +235,19 @@ async function driveFetch(url: string): Promise<Response> {
 }
 
 async function createAuthorizationHeader(): Promise<string | undefined> {
-  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) return undefined;
+  const inlineCredentials = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS && !inlineCredentials) {
+    return undefined;
+  }
   const auth = new GoogleAuth({
+    ...(inlineCredentials
+      ? {
+          credentials: JSON.parse(inlineCredentials) as {
+            client_email: string;
+            private_key: string;
+          },
+        }
+      : {}),
     scopes: ["https://www.googleapis.com/auth/drive.readonly"],
   });
   const client = await auth.getClient();
@@ -218,4 +257,45 @@ async function createAuthorizationHeader(): Promise<string | undefined> {
 
 function decode(bytes: Uint8Array): string {
   return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+}
+
+async function recordDriveSynchronization(
+  seen: number,
+  upserted: number,
+  skipped: number,
+): Promise<void> {
+  const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SECRET_KEY;
+  if (!url || !key) return;
+  const supabase = createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data: queued, error: queueError } = await supabase
+    .from("source_sync_runs")
+    .select("id")
+    .eq("source_system", "sacramento_drive")
+    .eq("status", "queued")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (queueError) {
+    throw new Error(`Unable to inspect Drive sync queue: ${queueError.message}`);
+  }
+  const payload = {
+    source_system: "sacramento_drive",
+    trigger_type: queued ? "manual" : "scheduled",
+    status: skipped ? "partial" : "succeeded",
+    records_seen: seen,
+    records_upserted: upserted,
+    records_skipped: skipped,
+    records_failed: 0,
+    started_at: syncStartedAt,
+    finished_at: new Date().toISOString(),
+    cursor: { manifest: outputPath },
+  };
+  const query = queued
+    ? supabase.from("source_sync_runs").update(payload).eq("id", queued.id)
+    : supabase.from("source_sync_runs").insert(payload);
+  const { error } = await query;
+  if (error) throw new Error(`Unable to record Drive sync: ${error.message}`);
 }

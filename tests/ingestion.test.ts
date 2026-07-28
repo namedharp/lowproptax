@@ -22,22 +22,22 @@ test("prepares stable, bounded FOIA chunks with source metadata", async () => {
   const text = Array.from(
     { length: 35 },
     (_, index) =>
-      `Paragraph ${index + 1}. The Fresno County board reviewed valuation evidence, lien-date conditions, and the documented income approach.`,
+      `Paragraph ${index + 1}. The Sacramento County board reviewed valuation evidence, lien-date conditions, and the documented income approach.`,
   ).join("\n\n");
   const first = await previewFoiaDocument({
     sourceId: "drive-example-1",
-    title: "Fresno Findings of Fact",
+    title: "Sacramento Findings of Fact",
     text,
     visibility: "public_foia",
   });
   const second = await previewFoiaDocument({
     sourceId: "drive-example-1",
-    title: "Fresno Findings of Fact",
+    title: "Sacramento Findings of Fact",
     text,
     visibility: "public_foia",
   });
 
-  assert.equal(first.source.county, "Fresno");
+  assert.equal(first.source.county, "Sacramento");
   assert.equal(first.source.documentType, "findings");
   assert.ok(first.chunks.length > 1);
   assert.equal(first.chunks[0].id, second.chunks[0].id);

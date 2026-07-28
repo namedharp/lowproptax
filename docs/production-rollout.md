@@ -1,97 +1,65 @@
-# Production rollout
+# Sacramento pilot rollout
 
-## 1. Replace exposed credentials
+## 1. Rotate exposed credentials
 
-Rotate every credential previously pasted into chat, including the Qdrant key,
-LLM key, and private-server password. Store replacements only in the hosting
-runtime or the server's secret manager.
+Rotate every credential previously pasted into chat. Put replacements only in
+the hosting runtime, GitHub Actions secrets, Supabase staging, or the worker
+secret store. Do not reuse the old Qdrant, model, or server credentials.
 
-The answer provider is now defined:
+## 2. Validate Supabase staging
 
-- provider: DeepInfra
-- API base URL: `https://api.deepinfra.com/v1/openai`
-- API style: `chat-completions`
-- model: `deepseek-ai/DeepSeek-V4-Flash`
+Apply the migration in staging. Create at least one admin and the pilot analyst
+accounts, then confirm:
 
-The DeepInfra key remains server-only and must be rotated before production
-because the original value was pasted into chat. Live retrieval still requires
-a separate 1,536-dimensional embedding provider, or a versioned re-index of the
-Qdrant collections with a different vector size.
+- team members can view Sacramento cases;
+- only the assigned analyst or an admin can edit;
+- anon and authenticated browser roles have no direct grants on internal
+  tables;
+- the same Lambda or Drive sync can run twice without duplicates;
+- private case uploads create only `case_private_live` queue mappings;
+- all edits and access-management changes create audit events.
 
-## 2. Review Supabase security
+Run `supabase/validation/sacramento_pilot.sql`. Keep the separate
+`docs/supabase-security-review.sql` review for pre-existing functions and other
+tables outside this pilot migration.
 
-The connected `FOIA REQUESTS` project currently reports:
+## 3. Build versioned indexes
 
-- RLS disabled on `county_profiles`, `apn_qdrant_index`,
-  `shadow_scoring_log`, and `apartment_targets`
-- anonymous GraphQL discovery grants on internal appeal/property tables
-- public execution grants on security-definer helper functions
-- mutable search paths on several database functions
+Run the Python worker with `--bootstrap`, ingest Sacramento public FOIA records,
+prior appeal metadata, and redacted private test documents. Do not activate the
+aliases yet. Confirm all payloads include a document ID, content hash, source
+URL where public, document type, page range, tax year/property type/outcome when
+known, `county_slug=sacramento`, and the correct visibility.
 
-Review `docs/supabase-security-review.sql` with the owners of existing services.
-Do not apply it until the replacement policies and service dependencies are
-confirmed.
+## 4. Configure live services
 
-## 3. Apply the application migration to staging
+Required server values are documented in `.env.example`. DeepInfra answers use
+`deepseek-ai/DeepSeek-V4-Flash`. Qdrant generates MiniLM dense vectors and BM25
+sparse vectors directly. Millage remains waiting until a read-only HTTPS API is
+available.
 
-The migration intentionally reuses existing `appeals`, `properties`,
-`appeal_documents`, and tenant/auth structures. It adds:
+Configure the nightly GitHub workflow with read-only Drive credentials,
+Supabase service credentials, and rotated Qdrant credentials. Run it manually
+once before relying on the schedule.
 
-- appeal workspace metadata
-- research history and analyst feedback
-- evidence checklists
-- FOIA ingestion sources and job history
-- a private `case-documents` storage bucket
+## 5. Pass the evaluation gate
 
-Run the full analyst workflow against staging before production:
+Use 30 or more analyst-written questions from 20–30 Sacramento appeals. Run the
+automated retrieval/privacy/latency evaluation and manually review every answer
+for unsupported factual claims. Required:
 
-1. Create an appeal.
-2. Edit requested value and case theory.
-3. Upload a private document.
-4. Run a cited research question.
-5. Save useful/not-useful feedback.
-6. Verify all records are absent from anonymous API responses.
+- top-five relevant evidence rate at least 85%;
+- working page references at least 95%;
+- zero unsupported factual claims;
+- zero private points in public collections;
+- zero anonymous internal-table access;
+- zero duplicates after repeated synchronization;
+- full research-response P95 below 20 seconds.
 
-## 4. Configure private runtime values
+## 6. Activate gradually
 
-Required for live mode:
-
-- `DEMO_MODE=false`
-- `ANALYST_EMAIL_ALLOWLIST`
-- `SUPABASE_URL`
-- `SUPABASE_SECRET_KEY`
-- `QDRANT_URL`
-- `QDRANT_API_KEY`
-- `QDRANT_RESEARCH_COLLECTION`
-- `QDRANT_APPEAL_COLLECTION`
-- `LLM_API_BASE_URL`
-- `LLM_API_STYLE`
-- `LLM_MODEL`
-- `LLM_API_KEY`
-- optional `LLM_SERVICE_TIER`, `LLM_REASONING_EFFORT`, `LLM_TEMPERATURE`, and
-  `LLM_MAX_TOKENS`
-- compatible embedding provider settings
-
-## 5. Start incremental FOIA synchronization
-
-Use a read-only Google service account and schedule:
-
-1. `npm run sync:drive`
-2. manifest validation
-3. `npm run ingest:foia`
-
-Start with one county. Review skipped files, OCR quality, county normalization,
-document classification, citations, and Qdrant point counts before expanding.
-
-## 6. Pilot gate
-
-Use 20–30 known appeals and require analyst review of:
-
-- correct county and property-type filtering
-- exact source and page traceability
-- correct interpretation of wins, losses, withdrawals, and stipulations
-- zero unsupported factual claims
-- zero leakage of private documents into public search
-- useful evidence gaps and defensible case summaries
-
-Do not automate filing or client-facing advice until the pilot passes.
+After the gate passes, switch the three stable Qdrant aliases with
+`--activate-aliases`. Enable live mode for admins first, review telemetry and
+OCR failures, then add analysts. Retain the old collections for at least 30
+days. Filing packets, notifications, CMA write-back, and other counties remain
+out of scope for this pilot.

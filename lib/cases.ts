@@ -8,6 +8,7 @@ import type {
   ResearchHistoryItem,
   ResearchResult,
 } from "./types";
+import type { AnalystAccess } from "./auth";
 
 type AppealRow = {
   id: string;
@@ -21,6 +22,7 @@ type AppealRow = {
   updated_at?: string | null;
   case_theory?: string | null;
   confidence?: number | null;
+  assigned_analyst_email?: string | null;
 };
 
 type PropertyRow = {
@@ -48,30 +50,34 @@ export type NewAppealCase = {
   filingDeadline?: string;
 };
 
-export async function listAppealCases(): Promise<AppealCase[]> {
+export async function listAppealCases(
+  analyst?: Pick<AnalystAccess, "email" | "role">,
+): Promise<AppealCase[]> {
   if (!liveCaseDataIsConfigured()) return demoCases;
 
   const supabase = getSupabaseServerClient();
+  const { data: properties, error: propertyError } = await supabase
+    .from("properties")
+    .select("id,apn,address,city,county,property_type")
+    .ilike("county", "%sacramento%")
+    .limit(5000);
+  if (propertyError) {
+    throw new Error(`Unable to load Sacramento properties: ${propertyError.message}`);
+  }
+  const propertyIds = ((properties ?? []) as PropertyRow[]).map(
+    (property) => property.id,
+  );
+  if (!propertyIds.length) return [];
   const { data: appeals, error } = await supabase
     .from("appeals")
     .select(
-      "id,property_id,appeal_number,tax_year,status,enrolled_value,claimed_value,filing_deadline,updated_at,case_theory,confidence",
+      "id,property_id,appeal_number,tax_year,status,enrolled_value,claimed_value,filing_deadline,updated_at,case_theory,confidence,assigned_analyst_email",
     )
+    .in("property_id", propertyIds)
     .order("filing_deadline", { ascending: true, nullsFirst: false })
     .limit(100);
   if (error) throw new Error(`Unable to load appeals: ${error.message}`);
   if (!appeals?.length) return [];
-
-  const propertyIds = [
-    ...new Set((appeals as AppealRow[]).map((item) => item.property_id)),
-  ];
-  const { data: properties, error: propertyError } = await supabase
-    .from("properties")
-    .select("id,apn,address,city,county,property_type")
-    .in("id", propertyIds);
-  if (propertyError) {
-    throw new Error(`Unable to load appeal properties: ${propertyError.message}`);
-  }
 
   const propertyById = new Map(
     ((properties ?? []) as PropertyRow[]).map((property) => [
@@ -80,13 +86,68 @@ export async function listAppealCases(): Promise<AppealCase[]> {
     ]),
   );
   return (appeals as AppealRow[]).map((appeal) =>
-    mapAppeal(appeal, propertyById.get(appeal.property_id)),
+    mapAppeal(appeal, propertyById.get(appeal.property_id), analyst),
   );
+}
+
+export async function getAppealCase(
+  id: string,
+  analyst?: Pick<AnalystAccess, "email" | "role">,
+): Promise<AppealCase | null> {
+  if (!liveCaseDataIsConfigured()) {
+    const item = demoCases.find((appeal) => appeal.id === id) ?? demoCases[0];
+    return item ? { ...item, canEdit: true } : null;
+  }
+  if (!isUuid(id)) return null;
+  const supabase = getSupabaseServerClient();
+  const { data: appeal, error } = await supabase
+    .from("appeals")
+    .select(
+      "id,property_id,appeal_number,tax_year,status,enrolled_value,claimed_value,filing_deadline,updated_at,case_theory,confidence,assigned_analyst_email",
+    )
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw new Error(`Unable to load appeal: ${error.message}`);
+  if (!appeal) return null;
+  const { data: property, error: propertyError } = await supabase
+    .from("properties")
+    .select("id,apn,address,city,county,property_type")
+    .eq("id", appeal.property_id)
+    .maybeSingle();
+  if (propertyError) {
+    throw new Error(`Unable to load appeal property: ${propertyError.message}`);
+  }
+  const mapped = mapAppeal(
+    appeal as AppealRow,
+    property as PropertyRow | undefined,
+    analyst,
+  );
+  return mapped.county === "Sacramento" ? mapped : null;
+}
+
+export async function canEditAppeal(
+  id: string,
+  analyst: Pick<AnalystAccess, "email" | "role">,
+): Promise<boolean> {
+  if (!liveCaseDataIsConfigured()) return true;
+  if (analyst.role === "admin") return true;
+  if (!isUuid(id)) return false;
+  const { data, error } = await getSupabaseServerClient()
+    .from("appeals")
+    .select("assigned_analyst_email")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw new Error(`Unable to verify case assignment: ${error.message}`);
+  return data?.assigned_analyst_email === analyst.email;
 }
 
 export async function createAppealCase(
   input: NewAppealCase,
+  analystEmail?: string,
 ): Promise<AppealCase> {
+  if (normalizeCounty(input.county) !== "Sacramento") {
+    throw new Error("The pilot accepts Sacramento County cases only.");
+  }
   const id = crypto.randomUUID();
   const appealNumber = `CA-${input.taxYear}-${id.slice(0, 6).toUpperCase()}`;
   const property: PropertyRow = {
@@ -108,9 +169,10 @@ export async function createAppealCase(
     filing_deadline: input.filingDeadline,
     updated_at: new Date().toISOString(),
     confidence: 35,
+    assigned_analyst_email: analystEmail ?? null,
   };
   if (!liveCaseDataIsConfigured()) {
-    return { ...mapAppeal(appeal, property), source: "demo" };
+    return { ...mapAppeal(appeal, property), source: "demo", canEdit: true };
   }
 
   const supabase = getSupabaseServerClient();
@@ -142,16 +204,27 @@ export async function createAppealCase(
       filing_deadline: input.filingDeadline ?? null,
       source_system: "appeal_intelligence",
       confidence: 35,
+      assigned_analyst_email: analystEmail ?? null,
     })
     .select(
-      "id,property_id,appeal_number,tax_year,status,enrolled_value,claimed_value,filing_deadline,updated_at,case_theory,confidence",
+      "id,property_id,appeal_number,tax_year,status,enrolled_value,claimed_value,filing_deadline,updated_at,case_theory,confidence,assigned_analyst_email",
     )
     .single();
   if (appealError) {
     await supabase.from("properties").delete().eq("id", propertyData.id);
     throw new Error(`Unable to create appeal: ${appealError.message}`);
   }
-  return mapAppeal(appealData as AppealRow, propertyData as PropertyRow);
+  await recordAuditEvent({
+    appealId: appealData.id as string,
+    actorEmail: analystEmail,
+    action: "case.created",
+    entityType: "appeal",
+    entityId: appealData.id as string,
+    afterState: { appeal_number: appealNumber, source_system: "appeal_intelligence" },
+  });
+  return mapAppeal(appealData as AppealRow, propertyData as PropertyRow, analystEmail
+    ? { email: analystEmail, role: "analyst" }
+    : undefined);
 }
 
 export async function updateAppealCase(
@@ -163,6 +236,7 @@ export async function updateAppealCase(
     caseTheory?: string;
     confidence?: number;
   },
+  actorEmail?: string,
 ): Promise<void> {
   if (!liveCaseDataIsConfigured()) return;
   if (!isUuid(id)) throw new Error("A valid appeal ID is required.");
@@ -182,6 +256,14 @@ export async function updateAppealCase(
     .update(patch)
     .eq("id", id);
   if (error) throw new Error(`Unable to update appeal: ${error.message}`);
+  await recordAuditEvent({
+    appealId: id,
+    actorEmail,
+    action: "case.updated",
+    entityType: "appeal",
+    entityId: id,
+    afterState: patch,
+  });
 }
 
 export async function saveResearchRun(
@@ -189,6 +271,7 @@ export async function saveResearchRun(
   question: string,
   result: ResearchResult,
   analystEmail: string,
+  threadId?: string,
 ): Promise<string | undefined> {
   if (!liveCaseDataIsConfigured() || !isUuid(appealId)) return undefined;
 
@@ -196,16 +279,24 @@ export async function saveResearchRun(
     .from("case_research_runs")
     .insert({
       appeal_id: appealId,
+      thread_id: threadId ?? null,
       question,
       answer: result.answer,
       confidence: result.confidence,
       citations: result.citations,
       similar_appeals: result.similarCases,
       evidence_gaps: result.gaps,
+      limitations: result.limitations,
       retrieval_metadata: {
         mode: result.mode,
         generated_at: result.generatedAt,
       },
+      retrieved_point_ids: result.telemetry?.retrievedPointIds ?? [],
+      duration_ms: result.telemetry?.durationMs ?? null,
+      prompt_tokens: result.telemetry?.promptTokens ?? null,
+      completion_tokens: result.telemetry?.completionTokens ?? null,
+      total_tokens: result.telemetry?.totalTokens ?? null,
+      provider: result.telemetry?.provider ?? null,
       model:
         process.env.LLM_MODEL ??
         process.env.OPENAI_MODEL ??
@@ -309,9 +400,21 @@ export async function upsertEvidenceItem(
     : getSupabaseServerClient().from("case_evidence_items").insert(payload);
   const { error } = await query;
   if (error) throw new Error(`Unable to save evidence item: ${error.message}`);
+  await recordAuditEvent({
+    appealId,
+    actorEmail: analystEmail,
+    action: "evidence.updated",
+    entityType: "case_evidence_item",
+    entityId: item.id,
+    afterState: payload,
+  });
 }
 
-function mapAppeal(appeal: AppealRow, property?: PropertyRow): AppealCase {
+function mapAppeal(
+  appeal: AppealRow,
+  property?: PropertyRow,
+  analyst?: Pick<AnalystAccess, "email" | "role">,
+): AppealCase {
   const address = [property?.address, property?.city, "CA"].filter(Boolean).join(", ");
   const assessedValue = numberValue(appeal.enrolled_value);
   const requestedValue = numberValue(appeal.claimed_value);
@@ -331,7 +434,11 @@ function mapAppeal(appeal: AppealRow, property?: PropertyRow): AppealCase {
     propertyType,
     taxYear: String(appeal.tax_year),
     status: mapStatus(appeal.status),
-    analyst: "Unassigned",
+    analyst: appeal.assigned_analyst_email ?? "Unassigned",
+    assignedAnalystEmail: appeal.assigned_analyst_email ?? null,
+    canEdit:
+      analyst?.role === "admin" ||
+      (Boolean(analyst?.email) && appeal.assigned_analyst_email === analyst?.email),
     assessedValue,
     requestedValue,
     deadline: formatDate(appeal.filing_deadline),
@@ -342,6 +449,30 @@ function mapAppeal(appeal: AppealRow, property?: PropertyRow): AppealCase {
     lastActivity: formatDate(appeal.updated_at),
     source: "supabase",
   };
+}
+
+async function recordAuditEvent(input: {
+  appealId?: string;
+  actorEmail?: string;
+  action: string;
+  entityType: string;
+  entityId?: string;
+  beforeState?: Record<string, unknown>;
+  afterState?: Record<string, unknown>;
+}): Promise<void> {
+  if (!liveCaseDataIsConfigured()) return;
+  const { error } = await getSupabaseServerClient()
+    .from("appeal_audit_events")
+    .insert({
+      appeal_id: input.appealId ?? null,
+      actor_email: input.actorEmail ?? null,
+      action: input.action,
+      entity_type: input.entityType,
+      entity_id: input.entityId ?? null,
+      before_state: input.beforeState ?? null,
+      after_state: input.afterState ?? null,
+    });
+  if (error) throw new Error(`Unable to record audit event: ${error.message}`);
 }
 
 function mapStatus(status: string): AppealCase["status"] {

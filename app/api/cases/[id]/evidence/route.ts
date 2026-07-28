@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
-import { getRequestAnalyst } from "@/lib/auth";
-import { listEvidenceItems, upsertEvidenceItem } from "@/lib/cases";
+import { authorizeRequest } from "@/lib/auth";
+import { canEditAppeal, listEvidenceItems, upsertEvidenceItem } from "@/lib/cases";
 import type { EvidenceItem } from "@/lib/types";
 
 export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  if (!getRequestAnalyst(request)) {
+  if (!(await authorizeRequest(request))) {
     return NextResponse.json({ error: "Analyst access is required." }, { status: 401 });
   }
   try {
@@ -26,12 +26,18 @@ export async function PUT(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const analyst = getRequestAnalyst(request);
+  const analyst = await authorizeRequest(request);
   if (!analyst) {
     return NextResponse.json({ error: "Analyst access is required." }, { status: 401 });
   }
   try {
     const { id } = await context.params;
+    if (!(await canEditAppeal(id, analyst))) {
+      return NextResponse.json(
+        { error: "This case is assigned to another analyst." },
+        { status: 403 },
+      );
+    }
     const body = (await request.json()) as Partial<EvidenceItem>;
     if (
       typeof body.id !== "string" ||

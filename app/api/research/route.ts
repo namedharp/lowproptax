@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
-import { getRequestAnalyst } from "@/lib/auth";
-import { saveResearchRun } from "@/lib/cases";
+import { authorizeRequest } from "@/lib/auth";
+import { getAppealCase, saveResearchRun } from "@/lib/cases";
 import { researchAppeal } from "@/lib/research";
-import type { AppealCase } from "@/lib/types";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const analyst = getRequestAnalyst(request);
+  const analyst = await authorizeRequest(request);
   if (!analyst) {
     return NextResponse.json(
       { error: "Analyst access is required." },
@@ -17,10 +16,10 @@ export async function POST(request: Request) {
 
   try {
     const body = (await request.json()) as {
+      appealId?: unknown;
       question?: unknown;
-      appealCase?: unknown;
+      threadId?: unknown;
     };
-
     if (
       typeof body.question !== "string" ||
       body.question.trim().length < 5 ||
@@ -31,23 +30,28 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-
-    if (!isAppealCase(body.appealCase)) {
+    if (typeof body.appealId !== "string" || body.appealId.length > 100) {
       return NextResponse.json(
-        { error: "A valid case context is required." },
+        { error: "A valid appeal ID is required." },
         { status: 400 },
       );
     }
+    const threadId =
+      typeof body.threadId === "string" && body.threadId.length <= 200
+        ? body.threadId.trim() || undefined
+        : undefined;
+    const appealCase = await getAppealCase(body.appealId, analyst);
+    if (!appealCase) {
+      return NextResponse.json({ error: "Appeal not found." }, { status: 404 });
+    }
 
-    const result = await researchAppeal(
-      body.question.trim(),
-      body.appealCase,
-    );
+    const result = await researchAppeal(body.question.trim(), appealCase);
     result.runId = await saveResearchRun(
-      body.appealCase.id,
+      appealCase.id,
       body.question.trim(),
       result,
       analyst.email,
+      threadId,
     );
     return NextResponse.json(result);
   } catch (error) {
@@ -60,17 +64,4 @@ export async function POST(request: Request) {
       { status: 502 },
     );
   }
-}
-
-function isAppealCase(value: unknown): value is AppealCase {
-  if (!value || typeof value !== "object") return false;
-  const item = value as Partial<AppealCase>;
-  return [
-    item.id,
-    item.caseNumber,
-    item.county,
-    item.propertyType,
-    item.taxYear,
-    item.issue,
-  ].every((field) => typeof field === "string" && field.length > 0);
 }

@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const developmentPreviewMeta =
-  /<meta(?=[^>]*\bname=["']codex-preview["'])(?=[^>]*\bcontent=["']development["'])[^>]*>/i;
-
 async function request(path = "/", init) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
@@ -32,10 +29,11 @@ test("server-renders the analyst workspace", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, developmentPreviewMeta);
+  assert.doesNotMatch(html, /codex-preview/i);
   assert.match(html, /<title>Analyst Workspace \| LowPropTax<\/title>/i);
   assert.match(html, /Appeal Intelligence/);
-  assert.match(html, /Cedar Ridge Office Park/);
+  assert.match(html, /Capitol Ridge Office Park/);
+  assert.match(html, /Sacramento research pilot/);
   assert.match(html, /Ask this case/);
   assert.match(html, /Most similar appeals/);
   assert.doesNotMatch(html, /react-loading-skeleton/);
@@ -51,13 +49,19 @@ test("returns safe integration health without credentials", async () => {
   assert.equal(body.mode, "demo");
   assert.deepEqual(body.integrations, {
     qdrant: false,
+    qdrantCollections: [
+      { alias: "lpt_research_live", status: "unconfigured" },
+      { alias: "appeal_comps_live", status: "unconfigured" },
+      { alias: "case_private_live", status: "unconfigured" },
+    ],
     llm: false,
     llmProvider: "deepinfra",
     llmModel: "deepseek-ai/DeepSeek-V4-Flash",
-    embeddings: false,
+    qdrantCloudInference: false,
     supabase: false,
     caseData: false,
     analystAccess: true,
+    millage: false,
   });
 });
 
@@ -74,6 +78,26 @@ test("validates research questions", async () => {
   assert.match((await response.json()).error, /between 5 and 2,000/);
 });
 
+test("loads demo case facts server-side for research", async () => {
+  const response = await request("/api/research", {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      appealId: "case-2197",
+      question: "Which Sacramento evidence should be reviewed first?",
+      threadId: "demo-thread",
+    }),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.mode, "demo");
+  assert.equal(body.citations[0].sourceType, "public");
+  assert.ok(body.limitations.length > 0);
+});
+
 test("lists fictional cases through the same API used by live data", async () => {
   const response = await request("/api/cases", {
     headers: { accept: "application/json" },
@@ -82,7 +106,7 @@ test("lists fictional cases through the same API used by live data", async () =>
   const body = await response.json();
   assert.equal(body.mode, "demo");
   assert.equal(body.cases.length, 3);
-  assert.equal(body.cases[0].county, "Fresno");
+  assert.equal(body.cases[0].county, "Sacramento");
 });
 
 test("creates a safe demo case through the production-shaped API", async () => {
@@ -94,8 +118,8 @@ test("creates a safe demo case through the production-shaped API", async () => {
     },
     body: JSON.stringify({
       address: "100 Test Plaza",
-      city: "Fresno",
-      county: "Fresno",
+      city: "Sacramento",
+      county: "Sacramento",
       parcel: "000-000-001",
       propertyType: "Office",
       taxYear: 2026,
@@ -106,7 +130,7 @@ test("creates a safe demo case through the production-shaped API", async () => {
   });
   assert.equal(response.status, 200);
   const body = await response.json();
-  assert.equal(body.case.county, "Fresno");
+  assert.equal(body.case.county, "Sacramento");
   assert.equal(body.case.requestedValue, 4200000);
   assert.equal(body.case.source, "demo");
 });

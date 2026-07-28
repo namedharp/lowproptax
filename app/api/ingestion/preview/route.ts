@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { getRequestAnalyst } from "@/lib/auth";
+import { authorizeRequest } from "@/lib/auth";
 import { previewFoiaDocument } from "@/lib/ingestion/normalize";
 import type { FoiaSourceDocument } from "@/lib/ingestion/types";
 
 export async function POST(request: Request) {
-  if (!getRequestAnalyst(request)) {
+  if (!(await authorizeRequest(request))) {
     return NextResponse.json({ error: "Analyst access is required." }, { status: 401 });
   }
   try {
