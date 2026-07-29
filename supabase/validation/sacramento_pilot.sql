@@ -18,6 +18,12 @@ select count(*) as private_documents_in_public_collection
 from public.case_document_vectors
 where qdrant_collection in ('lpt_research_live', 'appeal_comps_live');
 
+-- Must return one: the database enforces private-only Qdrant collections.
+select count(*) as private_collection_constraints
+from pg_constraint
+where conrelid = 'public.case_document_vectors'::regclass
+  and conname = 'case_document_vectors_private_collection_check';
+
 -- Must return zero rows: direct browser privileges on internal tables.
 select grantee, table_name, privilege_type
 from information_schema.role_table_grants

@@ -20,6 +20,8 @@ test("migration keeps internal tables server-only and models pilot operations", 
   }
   assert.match(sql, /revoke all on table public\.%I from anon, authenticated/i);
   assert.match(sql, /case_document_vectors/i);
+  assert.match(sql, /case_document_vectors_private_collection_check/i);
+  assert.match(sql, /\^case_private_v\[0-9\]\+_\[0-9\]\+\$/i);
   assert.match(sql, /source_sync_runs/i);
   assert.match(sql, /appeal_audit_events/i);
   assert.match(sql, /assigned_analyst_email/i);

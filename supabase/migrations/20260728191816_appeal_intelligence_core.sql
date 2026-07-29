@@ -176,6 +176,24 @@ create table if not exists public.case_document_vectors (
   unique (document_id, content_hash)
 );
 
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.case_document_vectors'::regclass
+      and conname = 'case_document_vectors_private_collection_check'
+  ) then
+    alter table public.case_document_vectors
+      add constraint case_document_vectors_private_collection_check
+      check (
+        qdrant_collection = 'case_private_live'
+        or qdrant_collection ~ '^case_private_v[0-9]+_[0-9]+$'
+      );
+  end if;
+end
+$$;
+
 create table if not exists public.appeal_audit_events (
   id bigint generated always as identity primary key,
   appeal_id uuid references public.appeals(id) on delete set null,
