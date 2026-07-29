@@ -5,7 +5,7 @@ import test from "node:test";
 test("migration keeps internal tables server-only and models pilot operations", async () => {
   const sql = await readFile(
     new URL(
-      "../supabase/migrations/20260728191816_appeal_intelligence_core.sql",
+      "../supabase/migrations/20260729170052_appeal_intelligence_core.sql",
       import.meta.url,
     ),
     "utf8",
