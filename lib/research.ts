@@ -10,6 +10,7 @@ import {
   type QdrantPoint,
 } from "./qdrant";
 import { redactPrivateExcerpt } from "./redaction";
+import { liveModeIsExplicitlyEnabled } from "./runtime-mode";
 import type {
   AppealCase,
   EvidenceCitation,
@@ -64,7 +65,7 @@ export function liveResearchIsConfigured(): boolean {
   return Boolean(
     llmIsConfigured() &&
       qdrantIsConfigured() &&
-      process.env.DEMO_MODE !== "true",
+      liveModeIsExplicitlyEnabled(),
   );
 }
 
