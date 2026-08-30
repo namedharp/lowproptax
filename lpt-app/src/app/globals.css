@@ -1,0 +1,202 @@
+@import "tailwindcss";
+
+/* ============================================================
+   LowPropTax — Glassmorphism Theme (Tailwind CSS v4)
+   ============================================================
+   Color palette : Teal / Emerald gradient
+   Surface style : Frosted-glass panels
+   ============================================================ */
+
+/* ----------------------------------------------------------
+   1. Theme tokens — consumed by Tailwind utilities
+   ---------------------------------------------------------- */
+@theme inline {
+  /* --- Teal palette ------------------------------------ */
+  --color-teal-50:  #f0fdfa;
+  --color-teal-100: #ccfbf1;
+  --color-teal-200: #99f6e4;
+  --color-teal-300: #5eead4;
+  --color-teal-400: #2dd4bf;
+  --color-teal-500: #14b8a6;
+  --color-teal-600: #0d9488;
+  --color-teal-700: #0f766e;
+  --color-teal-800: #115e59;
+  --color-teal-900: #134e4a;
+  --color-teal-950: #042f2e;
+
+  /* --- Emerald palette --------------------------------- */
+  --color-emerald-50:  #ecfdf5;
+  --color-emerald-100: #d1fae5;
+  --color-emerald-200: #a7f3d0;
+  --color-emerald-300: #6ee7b7;
+  --color-emerald-400: #34d399;
+  --color-emerald-500: #10b981;
+  --color-emerald-600: #059669;
+  --color-emerald-700: #047857;
+  --color-emerald-800: #065f46;
+  --color-emerald-900: #064e3b;
+  --color-emerald-950: #022c22;
+
+  /* --- Glass surface colors ---------------------------- */
+  --color-glass-white:       rgba(255, 255, 255, 0.15);
+  --color-glass-white-heavy: rgba(255, 255, 255, 0.25);
+  --color-glass-white-light: rgba(255, 255, 255, 0.08);
+
+  /* --- Glass border colors ----------------------------- */
+  --color-glass-border:       rgba(255, 255, 255, 0.18);
+  --color-glass-border-heavy: rgba(255, 255, 255, 0.30);
+
+  /* --- Glass teal tints -------------------------------- */
+  --color-glass-teal:       rgba(20, 184, 166, 0.15);
+  --color-glass-teal-heavy: rgba(20, 184, 166, 0.30);
+
+  /* --- Backdrop blur ----------------------------------- */
+  --backdrop-blur-glass:       12px;
+  --backdrop-blur-glass-heavy: 20px;
+
+  /* --- Box shadows ------------------------------------- */
+  --shadow-glass:       0 4px 24px 0 rgba(0, 0, 0, 0.18), inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+  --shadow-glass-sm:    0 2px 12px 0 rgba(0, 0, 0, 0.12), inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+  --shadow-glass-lg:    0 8px 40px 0 rgba(0, 0, 0, 0.25), inset 0 1px 0 0 rgba(255, 255, 255, 0.10);
+  --shadow-glass-inset: inset 0 2px 8px 0 rgba(0, 0, 0, 0.20);
+  --shadow-glow-teal:   0 0 20px 2px rgba(20, 184, 166, 0.35), 0 0 40px 4px rgba(20, 184, 166, 0.15);
+  --shadow-glow-emerald: 0 0 20px 2px rgba(16, 185, 129, 0.35), 0 0 40px 4px rgba(16, 185, 129, 0.15);
+
+  /* --- Border radius ----------------------------------- */
+  --radius-glass:    16px;
+  --radius-glass-lg: 24px;
+
+  /* --- Animations -------------------------------------- */
+  --animate-fade-in:  fade-in 0.4s ease-out both;
+  --animate-slide-up: slide-up 0.5s ease-out both;
+}
+
+/* ----------------------------------------------------------
+   2. CSS custom properties (gradients, keyframes, etc.)
+      These live in :root because @theme does not support
+      gradient or keyframe definitions.
+   ---------------------------------------------------------- */
+:root {
+  /* Gradient presets — reference via var() in inline styles
+     or in the utility classes below. */
+  --gradient-body:       linear-gradient(135deg, #0f766e 0%, #065f46 50%, #042f2e 100%);
+  --gradient-glass-teal: linear-gradient(135deg, rgba(20, 184, 166, 0.12) 0%, rgba(16, 185, 129, 0.06) 100%);
+  --gradient-shine:      linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0) 60%);
+  --gradient-border:     linear-gradient(135deg, rgba(255, 255, 255, 0.25) 0%, rgba(255, 255, 255, 0.05) 100%);
+}
+
+/* Keyframes */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ----------------------------------------------------------
+   3. Global body styles
+   ---------------------------------------------------------- */
+body {
+  background: var(--gradient-body);
+  min-height: 100vh;
+  color: #ffffff;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ----------------------------------------------------------
+   4. Custom utility classes — Tailwind v4 @utility syntax
+   ---------------------------------------------------------- */
+
+/* --- .glass — default frosted-glass panel ---------------- */
+@utility glass {
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 16px;
+  box-shadow: 0 4px 24px 0 rgba(0, 0, 0, 0.18),
+              inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+}
+
+/* --- .glass-heavy — more opaque, heavier blur ------------ */
+@utility glass-heavy {
+  background: rgba(255, 255, 255, 0.25);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.30);
+  border-radius: 16px;
+  box-shadow: 0 8px 40px 0 rgba(0, 0, 0, 0.25),
+              inset 0 1px 0 0 rgba(255, 255, 255, 0.10);
+}
+
+/* --- .glass-light — subtle, barely-there panel ----------- */
+@utility glass-light {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 16px;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.12),
+              inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+}
+
+/* --- .glass-input — form inputs with glass treatment ----- */
+@utility glass-input {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 12px;
+  padding: 0.625rem 1rem;
+  color: #ffffff;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.12),
+              inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+}
+
+.glass-input:focus {
+  border-color: #2dd4bf;
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.25),
+              0 2px 12px 0 rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.glass-input::placeholder {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* ----------------------------------------------------------
+   5. Custom scrollbar
+   ---------------------------------------------------------- */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.30);
+  background-clip: content-box;
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) rgba(255, 255, 255, 0.05);
+}
